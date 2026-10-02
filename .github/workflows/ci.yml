@@ -1,0 +1,76 @@
+name: verify
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      GOPROXY: https://goproxy.cn,direct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable
+      - run: go mod download && go mod verify && go test -race ./cmd/... ./internal/... && go vet ./cmd/... ./internal/...
+      - name: Validate the pinned Caddy with isolated Cloudflare fixtures
+        run: |
+          cd deploy/caddy
+          go mod download
+          go mod verify
+          go build -o /tmp/caddy-admin-validation .
+          cd ../..
+          CADDY_INTEGRATION_BINARY=/tmp/caddy-admin-validation go test -v ./internal/adapter/caddy -run '^TestCloudflareValidationReadsRestrictedSecretFile$' -count=1
+      - name: Deployment configuration
+        run: |
+          sh -n deploy/entrypoint.sh
+          python3 -m py_compile test/container_smoke.py
+          docker compose config --quiet
+          docker compose -f compose.full.yaml config --quiet
+          docker compose -f compose.yaml -f compose.build.yaml config --quiet
+          CADDY_ADMIN_URL=http://external:2019 MANAGER_DIAL=manager:8080 docker compose -f compose.yaml -f compose.external.yaml config --quiet
+          docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml config --quiet
+      - run: corepack pnpm install --frozen-lockfile && corepack pnpm test && corepack pnpm build
+        working-directory: web
+      - run: docker compose -f compose.yaml -f compose.build.yaml build
+  publish:
+    name: Publish container image
+    needs: tests
+    if: github.repository == 'gofxq/caddy_admin' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: app
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/gofxq/caddy-admin:latest
+            ghcr.io/gofxq/caddy-admin:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

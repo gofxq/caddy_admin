@@ -1,0 +1,7 @@
+services: # 源码构建：docker compose -f compose.yaml -f compose.build.yaml up -d --build；须在项目源码目录执行。
+  caddy:
+    image: caddy-admin:local # 本地镜像使用独立标签，不覆盖 GHCR 发布镜像。
+    pull_policy: build # 每次启动从本地源码构建，不拉取同名远端镜像。
+    build:
+      context: . # 项目根目录；沿用 Dockerfile 中锁定的依赖。
+      target: app # 构建 Caddy、Manager 与前端，不包含测试工具镜像。

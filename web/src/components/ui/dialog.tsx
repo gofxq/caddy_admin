@@ -1,0 +1,4 @@
+import { Dialog as Primitive } from '@base-ui/react/dialog'
+import type { ReactNode } from 'react'
+import { X } from 'lucide-react'
+export function Dialog({open,onOpenChange,title,description,children,wide=false}:{open:boolean;onOpenChange:(v:boolean)=>void;title:string;description?:string;children:ReactNode;wide?:boolean}){return <Primitive.Root open={open} onOpenChange={onOpenChange}><Primitive.Portal><Primitive.Backdrop className="dialog-backdrop"/><Primitive.Popup className={`dialog ${wide?'dialog-wide':''}`}><div className="dialog-heading"><Primitive.Title>{title}</Primitive.Title><Primitive.Close aria-label="关闭" className="icon-button"><X size={20}/></Primitive.Close></div><Primitive.Description className="muted">{description??'请核对以下内容。'}</Primitive.Description>{children}</Primitive.Popup></Primitive.Portal></Primitive.Root>}
