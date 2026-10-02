@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 	"strings"
 	"time"
@@ -19,12 +20,14 @@ type SetupSettings struct {
 }
 
 type SetupRequest struct {
+	Cloudflare          *SetupCloudflare  `json:"cloudflare,omitempty"`
 	Services            []PortableService `json:"services,omitempty"`
 	ConfirmImport       bool              `json:"confirm_import,omitempty"`
 	Username            string            `json:"username"`
 	Password            string            `json:"password"`
 	Settings            SetupSettings     `json:"settings"`
 	AcknowledgeWarnings bool              `json:"acknowledge_warnings"`
+	WarningFingerprint  string            `json:"warning_fingerprint,omitempty"`
 }
 
 type SetupCheck struct {
@@ -40,6 +43,7 @@ type SetupPreflight struct {
 	RequiresAcknowledgement bool                    `json:"requires_acknowledgement"`
 	NetworkValid            bool                    `json:"network_valid"`
 	NetworkError            string                  `json:"network_error,omitempty"`
+	WarningFingerprint      string                  `json:"warning_fingerprint"`
 }
 
 type SetupNormalizedSettings struct {
@@ -48,6 +52,7 @@ type SetupNormalizedSettings struct {
 }
 
 type SetupStatus struct {
+	TestTLS       bool     `json:"test_tls"`
 	Initialized   bool     `json:"initialized"`
 	Resolvers     []string `json:"resolver_suggestions"`
 	ExternalCaddy bool     `json:"external_caddy"`
@@ -74,12 +79,14 @@ func ManagedSettingsForSetup(input SetupSettings) (domain.ManagedSettings, error
 }
 
 func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
+	service.setupMu.Lock()
+	defer service.setupMu.Unlock()
 	initialized, err := service.repository.IsInitialized(ctx)
 	resolvers := []string{}
 	if service.resolverSuggestions != nil {
 		resolvers = service.resolverSuggestions()
 	}
-	return SetupStatus{Initialized: initialized, Resolvers: resolvers, ExternalCaddy: service.externalCaddy()}, err
+	return SetupStatus{Initialized: initialized, Resolvers: resolvers, ExternalCaddy: service.externalCaddy(), TestTLS: service.options.TestTLS}, err
 }
 
 func (service *Service) SetupHandoff(ctx context.Context) SetupHandoff {
@@ -87,14 +94,18 @@ func (service *Service) SetupHandoff(ctx context.Context) SetupHandoff {
 	if service.externalCaddy() {
 		result.Mode = "external"
 	}
+	service.setupMu.Lock()
 	initialized, err := service.repository.IsInitialized(ctx)
+	service.setupMu.Unlock()
 	if err != nil {
 		return result
 	}
 	result.Initialized = initialized
+	result.ManagerStatus = "ready"
 	if !initialized {
 		return result
 	}
+	result.ManagerStatus = "error"
 	settings, err := service.repository.ManagedSettings(ctx)
 	if err != nil {
 		result.DNSStatus = "error"
@@ -166,14 +177,14 @@ func (service *Service) PreflightSetup(ctx context.Context, input SetupSettings)
 		}
 	}
 	if resolverOK {
-		result.Checks = append(result.Checks, setupCheck("resolver_reachable", "pass", "至少一个 DNS 解析器可响应"))
+		result.Checks = append(result.Checks, setupCheck("resolver_reachable", "pass", "至少一个服务器 DNS 解析器可响应"))
 	} else {
-		result.Checks = append(result.Checks, setupCheck("resolver_reachable", "warning", "暂时无法确认 DNS 解析器可用"))
+		result.Checks = append(result.Checks, setupCheck("resolver_reachable", "warning", "服务器 DNS 暂不可用，可能影响证书 DNS 校验；请检查高级设置中的解析器与网络"))
 	}
 	if dnsOK {
-		result.Checks = append(result.Checks, setupCheck("admin_dns", "pass", "控制台域名已有解析结果"))
+		result.Checks = append(result.Checks, setupCheck("admin_dns", "pass", "服务器 DNS 已返回控制台地址"))
 	} else {
-		result.Checks = append(result.Checks, setupCheck("admin_dns", "warning", "控制台域名尚无可用解析结果"))
+		result.Checks = append(result.Checks, setupCheck("admin_dns", "warning", "服务器 DNS 未返回控制台地址，可能受缓存或内网地址过滤影响；浏览器 DoH 结果独立，请检查服务器解析器"))
 	}
 	if service.externalCaddy() {
 		if consoleOK {
@@ -187,12 +198,45 @@ func (service *Service) PreflightSetup(ctx context.Context, input SetupSettings)
 			result.RequiresAcknowledgement = true
 		}
 	}
+	result.WarningFingerprint = setupWarningFingerprint(result)
 	return result
+}
+
+// Bind consent to the settings and the warnings the administrator actually saw.
+// No password, token, or probe error is included in this non-sensitive binding.
+func setupWarningFingerprint(result SetupPreflight) string {
+	warnings := []SetupCheck{}
+	for _, check := range result.Checks {
+		if check.Status == "warning" {
+			warnings = append(warnings, check)
+		}
+	}
+	if len(warnings) == 0 {
+		return ""
+	}
+	raw, _ := json.Marshal(struct {
+		Settings domain.ManagedSettings
+		Warnings []SetupCheck
+	}{result.Normalized.ManagedSettings, warnings})
+	return domain.Fingerprint(raw)
 }
 
 func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest) (string, error) {
 	service.setupMu.Lock()
 	defer service.setupMu.Unlock()
+	initialized, err := service.repository.IsInitialized(ctx)
+	if err != nil {
+		return "", err
+	}
+	if initialized {
+		return "", domain.Conflict("系统已经初始化")
+	}
+	if len(request.Username) == 0 || len(request.Username) > 64 {
+		return "", domain.Invalid("用户名必须为 1–64 字节")
+	}
+	if err := domain.ValidatePassword(request.Password); err != nil {
+		return "", err
+	}
 	preflight := service.PreflightSetupImport(ctx, request.Settings, request.Services)
 	if !preflight.CanComplete {
 		for _, check := range preflight.Checks {
@@ -202,8 +246,8 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		}
 		return "", domain.Invalid("初始化配置无效")
 	}
-	if preflight.RequiresAcknowledgement && !request.AcknowledgeWarnings {
-		return "", &domain.AppError{Status: 409, Code: "setup_warning_confirmation_required", Message: "预检仍有警告；请核对并明确确认后再完成初始化"}
+	if preflight.RequiresAcknowledgement && (!request.AcknowledgeWarnings || request.WarningFingerprint != preflight.WarningFingerprint) {
+		return "", &domain.AppError{Status: 409, Code: "setup_warning_confirmation_required", Message: "预检警告尚未确认或已变化；请重新核对并明确确认后再完成初始化"}
 	}
 	settings := preflight.Normalized.ManagedSettings
 	if service.snapshot == nil {
@@ -222,8 +266,27 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	if options.AdminURL != "" {
 		certificate = domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "pending"}
 	}
+	automaticDNS := !service.externalCaddy() && !options.TestTLS
+	if automaticDNS {
+		if request.Cloudflare == nil || !request.Cloudflare.Confirmed || request.Cloudflare.Fingerprint == "" {
+			return "", domain.Invalid("请填写 Cloudflare Token、预览 DNS 记录并确认变更")
+		}
+		if service.setupDNS == nil || service.setupIntent == nil || service.secrets == nil || service.bootstrapTLS == nil {
+			return "", domain.Invalid("初始化 DNS 或 secret 存储未配置")
+		}
+		certificate = domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "pending"}
+	} else if request.Cloudflare != nil {
+		return "", domain.Invalid("当前模式不接受本机 Cloudflare 凭据")
+	}
 	options.CertificateMode = certificate.Mode
-	raw, err := domain.Generate(caddyConfigForOptions(options), nil)
+	caddyConfig := caddyConfigForOptions(options)
+	if automaticDNS {
+		caddyConfig.TemporaryAdminCertificate = true
+		if err := service.bootstrapTLS.Ensure(caddyConfig.TemporaryAdminCertPath, caddyConfig.TemporaryAdminKeyPath, settings.Origin); err != nil {
+			return "", err
+		}
+	}
+	raw, err := domain.Generate(caddyConfig, nil)
 	if err != nil {
 		return "", err
 	}
@@ -231,10 +294,61 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	if err != nil {
 		return "", err
 	}
-	if exists {
+	intent := SetupIntent{}
+	if automaticDNS {
+		intent, err = service.setupIntent.Read()
+		if err != nil {
+			return "", err
+		}
+	}
+	bindingRaw, _ := json.Marshal(struct {
+		Username string
+		Settings domain.ManagedSettings
+		Services []PortableService
+	}{request.Username, settings, request.Services})
+	binding := domain.Fingerprint(bindingRaw)
+	ownedSnapshot := false
+	if exists && automaticDNS && intent.ConfigurationHash == binding && intent.SnapshotHash == domain.Fingerprint(raw) {
+		existing, readErr := service.snapshot.Read()
+		ownedSnapshot = readErr == nil && domain.Fingerprint(existing) == intent.SnapshotHash
+	}
+	if exists && !ownedSnapshot {
 		return "", &domain.AppError{Status: 409, Code: "existing_snapshot", Message: "检测到已有启动快照；为保护数据，请先核对实例状态或按运维文档恢复"}
 	}
+	if automaticDNS {
+		cf := request.Cloudflare
+		dnsContext, cancelDNS := context.WithTimeout(ctx, 30*time.Second)
+		defer cancelDNS()
+		plan, previewErr := service.setupDNS.Preview(dnsContext, cf.Token, settings.HomelabDomain, cf.Address)
+		if previewErr != nil {
+			return "", previewErr
+		}
+		recovered := setupDNSRecovered(intent, plan, cf.Fingerprint)
+		if plan.Fingerprint != cf.Fingerprint && !recovered {
+			return "", domain.Conflict("DNS 记录已变化，请重新预览并确认")
+		}
+		if plan.Action != "reuse" {
+			return "", domain.Invalid("请先确认并写入 DNS 配置，解析生效后再完成初始化")
+		}
+		// The wizard checks propagation from the browser via DoH. Server-side
+		// resolution may filter private addresses; Cloudflare records and the
+		// confirmed change fingerprint remain authoritative for completion.
+		if err = service.secrets.WriteCloudflareToken(cf.Token); err != nil {
+			return "", err
+		}
+		confirmedPlan := plan
+		if recovered {
+			confirmedPlan = intent.Plan
+		}
+		intent = SetupIntent{Plan: confirmedPlan, ConfigurationHash: binding, SnapshotHash: domain.Fingerprint(raw)}
+		if err = service.setupIntent.Write(intent); err != nil {
+			return "", err
+		}
+	}
 	if err = service.snapshot.Write(raw); err != nil {
+		if automaticDNS {
+			return "", setupDNSLocalFailure()
+		}
 		return "", err
 	}
 	cleanup := true
@@ -250,9 +364,15 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		err = service.repository.CompleteSetup(ctx, credentials, settings, certificate)
 	}
 	if err != nil {
+		if automaticDNS {
+			return "", setupDNSLocalFailure()
+		}
 		return "", err
 	}
 	cleanup = false
+	if automaticDNS {
+		_ = service.setupIntent.Remove()
+	}
 	service.options = options
 	return strings.TrimRight(settings.Origin, "/"), nil
 }

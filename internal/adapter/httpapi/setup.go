@@ -16,6 +16,9 @@ import (
 )
 
 type SetupApplication interface {
+	CheckSetupDNS(context.Context, application.SetupSettings, string) (application.SetupDNSReport, error)
+	ConfirmSetupDNS(context.Context, application.SetupSettings, application.SetupCloudflare) (application.SetupDNSPlan, error)
+	PreviewSetupDNS(context.Context, string, string, string) (application.SetupDNSPlan, error)
 	PreflightSetupImport(context.Context, application.SetupSettings, []application.PortableService) application.SetupPreflight
 	SetupStatus(context.Context) (application.SetupStatus, error)
 	PreflightSetup(context.Context, application.SetupSettings) application.SetupPreflight
@@ -44,6 +47,9 @@ func NewSetup(application SetupApplication, _ SetupOptions, done func()) http.Ha
 	router.GET("/api/v1/setup/status", api.status)
 	router.POST("/api/v1/setup/preflight", api.preflight)
 	router.POST("/api/v1/setup/complete", api.complete)
+	router.POST("/api/v1/setup/dns/preview", api.dnsPreview)
+	router.POST("/api/v1/setup/dns/confirm", api.dnsConfirm)
+	router.POST("/api/v1/setup/dns/check", api.dnsCheck)
 	return router
 }
 
@@ -75,7 +81,7 @@ func (api *setupAPI) status(c *gin.Context) {
 		return
 	}
 	clientIP, _, _ := net.SplitHostPort(c.Request.RemoteAddr)
-	respondJSON(c, http.StatusOK, gin.H{"initialized": status.Initialized, "resolver_suggestions": status.Resolvers, "external_caddy": status.ExternalCaddy, "client_ip": clientIP})
+	respondJSON(c, http.StatusOK, gin.H{"initialized": status.Initialized, "test_tls": status.TestTLS, "resolver_suggestions": status.Resolvers, "external_caddy": status.ExternalCaddy, "client_ip": clientIP})
 }
 
 func (api *setupAPI) preflight(c *gin.Context) {
@@ -119,7 +125,7 @@ func (api *setupAPI) complete(c *gin.Context) {
 
 func setupOriginMatches(actual, requestHost string) bool {
 	parsed, err := url.Parse(actual)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || !strings.EqualFold(parsed.Host, requestHost) {
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || !strings.EqualFold(parsed.Host, requestHost) {
 		return false
 	}
 	if strings.EqualFold(parsed.Hostname(), "localhost") {
@@ -131,4 +137,65 @@ func setupOriginMatches(actual, requestHost string) bool {
 	}
 	address = address.Unmap()
 	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
+}
+
+func (api *setupAPI) dnsPreview(c *gin.Context) {
+	if !setupOriginMatches(c.GetHeader("Origin"), c.Request.Host) {
+		abortError(c, &domain.AppError{Status: 403, Code: "origin", Message: "请求来源不匹配"})
+		return
+	}
+	request, ok := bindJSON[struct {
+		Token   string `json:"token"`
+		Domain  string `json:"homelab_domain"`
+		Address string `json:"address"`
+	}](c)
+	if !ok {
+		return
+	}
+	plan, err := api.application.PreviewSetupDNS(c.Request.Context(), request.Token, request.Domain, request.Address)
+	if err != nil {
+		abortError(c, err)
+		return
+	}
+	respondJSON(c, http.StatusOK, plan)
+}
+
+func (api *setupAPI) dnsConfirm(c *gin.Context) {
+	if !setupOriginMatches(c.GetHeader("Origin"), c.Request.Host) {
+		abortError(c, &domain.AppError{Status: 403, Code: "origin", Message: "请求来源不匹配"})
+		return
+	}
+	request, ok := bindJSON[struct {
+		Settings   application.SetupSettings   `json:"settings"`
+		Cloudflare application.SetupCloudflare `json:"cloudflare"`
+	}](c)
+	if !ok {
+		return
+	}
+	plan, err := api.application.ConfirmSetupDNS(c.Request.Context(), request.Settings, request.Cloudflare)
+	if err != nil {
+		abortError(c, err)
+		return
+	}
+	respondJSON(c, http.StatusOK, plan)
+}
+
+func (api *setupAPI) dnsCheck(c *gin.Context) {
+	if !setupOriginMatches(c.GetHeader("Origin"), c.Request.Host) {
+		abortError(c, &domain.AppError{Status: 403, Code: "origin", Message: "请求来源不匹配"})
+		return
+	}
+	request, ok := bindJSON[struct {
+		Settings application.SetupSettings `json:"settings"`
+		Address  string                    `json:"address"`
+	}](c)
+	if !ok {
+		return
+	}
+	report, err := api.application.CheckSetupDNS(c.Request.Context(), request.Settings, request.Address)
+	if err != nil {
+		abortError(c, err)
+		return
+	}
+	respondJSON(c, http.StatusOK, report)
 }

@@ -19,11 +19,16 @@ web:
 
 single-up:
 	docker compose up -d
-
+reup:
+	docker compose -f compose.yaml -f compose.build.yaml down
+	sudo rm -rf -- ./.run/manager ./.run/snapshots ./.run/caddy-data ./.run/caddy-config
+	docker compose -f compose.yaml -f compose.build.yaml up -d --build
+	docker compose -f compose.yaml -f compose.build.yaml ps
+	
 container-test:
 	docker build --target test-client -t caddy-admin:single-container-test .
 	python3 test/container_smoke.py
-
+	
 validation-up:
 	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml up -d --build
 
@@ -36,3 +41,5 @@ validation-logs:
 
 validation-down:
 	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml down -v
+
+validation-reup:	validation-down	validation-up

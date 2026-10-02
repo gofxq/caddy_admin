@@ -195,7 +195,7 @@ func TestSetupPreflightAndStatusExposeTCPClientOnly(t *testing.T) {
 	}
 }
 
-func TestSetupRequiresExactPrivateHTTPSOrigin(t *testing.T) {
+func TestSetupRequiresExactPrivateOrigin(t *testing.T) {
 	fake := &setupApplication{}
 	handler := NewSetup(fake, SetupOptions{}, nil)
 	body := `{"username":"admin","password":"a-secure-password","settings":{"homelab_domain":"home.example.test","lan_cidrs":[],"upstream_cidrs":[],"allowed_names":[],"denied_ips":[],"resolvers":[]}}`
@@ -204,7 +204,7 @@ func TestSetupRequiresExactPrivateHTTPSOrigin(t *testing.T) {
 		want   int
 	}{
 		{"https://evil.example", http.StatusForbidden},
-		{"http://127.0.0.1:8080", http.StatusForbidden},
+		{"http://127.0.0.1:8080", http.StatusAccepted},
 		{"https://127.0.0.1:8080", http.StatusAccepted},
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
@@ -218,7 +218,7 @@ func TestSetupRequiresExactPrivateHTTPSOrigin(t *testing.T) {
 			t.Fatalf("origin=%s status=%d body=%s", test.origin, response.Code, response.Body.String())
 		}
 	}
-	if fake.calls != 1 {
+	if fake.calls != 2 {
 		t.Fatalf("CompleteSetup calls=%d", fake.calls)
 	}
 }
@@ -247,6 +247,26 @@ func TestWebHandlerServesSPAAndKeepsAPIErrors(t *testing.T) {
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
 		if response.Code != test.status || !strings.Contains(response.Body.String(), test.body) {
 			t.Fatalf("%s: %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestSetupPagePermitsOnlySelectedDoHServices(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("setup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	handler := WebHandler(root, http.NotFoundHandler())
+	for _, path := range []string{"/setup", "/"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		policy := response.Header().Get("Content-Security-Policy")
+		if path == "/setup" {
+			if !strings.Contains(policy, "connect-src 'self' https://cloudflare-dns.com/dns-query https://dns.google/resolve;") || strings.Contains(policy, "connect-src *") {
+				t.Fatalf("setup CSP does not allow only selected DoH services: %s", policy)
+			}
+		} else if strings.Contains(policy, "dns.google") {
+			t.Fatal("DoH CSP leaked to other pages")
 		}
 	}
 }
@@ -350,5 +370,69 @@ func TestErrorEnvelopeContract(t *testing.T) {
 	}
 	if response.Code != 404 || body.Error.Code != "not_found" || body.Error.Message != "接口不存在" || body.Error.RequestID == "" {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func (fake *setupApplication) ConfirmSetupDNS(_ context.Context, settings application.SetupSettings, cf application.SetupCloudflare) (application.SetupDNSPlan, error) {
+	fake.calls++
+	return application.SetupDNSPlan{Name: "*." + settings.HomelabDomain, Address: cf.Address, Fingerprint: cf.Fingerprint}, nil
+}
+
+func TestSetupDNSConfirmationRequiresExactOriginAndReturnsPlan(t *testing.T) {
+	for _, origin := range []string{"", "https://evil.example", "http://127.0.0.1:8080"} {
+		fake := &setupApplication{}
+		handler := NewSetup(fake, SetupOptions{}, nil)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/confirm", strings.NewReader(`{"settings":{"homelab_domain":"home.example.test"},"cloudflare":{"token":"test-token","address":"10.0.0.6","fingerprint":"preview","confirmed":true}}`))
+		request.Host = "127.0.0.1:8080"
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if origin == "http://127.0.0.1:8080" {
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"*.home.example.test"`) || strings.Contains(response.Body.String(), "test-token") {
+				t.Fatal(response.Code, response.Body.String())
+			}
+		} else if response.Code != http.StatusForbidden || fake.calls != 0 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+	}
+}
+
+func (fake *setupApplication) CheckSetupDNS(_ context.Context, settings application.SetupSettings, address string) (application.SetupDNSReport, error) {
+	fake.calls++
+	return application.SetupDNSReport{Verified: false, Queries: []application.SetupDNSQuery{{Name: "caddyadmin." + settings.HomelabDomain, Resolver: "1.1.1.1", Addresses: []string{}, Status: "block", Message: "解析尚未生效"}}}, nil
+}
+
+func TestSetupDNSCheckRequiresExactOriginAndReturnsFailedQueries(t *testing.T) {
+	for _, origin := range []string{"", "https://evil.example", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080"} {
+		fake := &setupApplication{}
+		handler := NewSetup(fake, SetupOptions{}, nil)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/check", strings.NewReader(`{"settings":{"homelab_domain":"home.example.test"},"address":"10.0.0.6"}`))
+		request.Host = "127.0.0.1:8080"
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if origin == "http://127.0.0.1:8080" {
+			var report application.SetupDNSReport
+			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &report) != nil || report.Verified || len(report.Queries) != 1 || report.Queries[0].Status != "block" {
+				t.Fatal(response.Code, response.Body.String())
+			}
+		} else if response.Code != http.StatusForbidden || fake.calls != 0 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+	}
+}
+func TestSetupDNSCheckRejectsUnknownFields(t *testing.T) {
+	fake := &setupApplication{}
+	handler := NewSetup(fake, SetupOptions{}, nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/check", strings.NewReader(`{"settings":{},"address":"10.0.0.6","token":"secret"}`))
+	request.Host = "127.0.0.1:8080"
+	request.Header.Set("Origin", "http://127.0.0.1:8080")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || fake.calls != 0 {
+		t.Fatal(response.Code, response.Body.String())
 	}
 }

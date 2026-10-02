@@ -12,8 +12,8 @@
 
 - 初始化 DNS 步骤提供可编辑的 Caddy 地址建议、Cloudflare 灰云通配符 A/AAAA 记录与复制操作，并支持按需重新检查 DNS。
 
-- 默认 `docker compose up -d` 可从空目录启动：自动创建持久化目录，内置模式通过标准 HTTPS 443 初始化。
-- 支持无 Cloudflare Token 的 HTTPS 首次初始化、内部证书过渡状态、设置页 Cloudflare 激活及可信公网证书发布门禁。
+- 默认 `docker compose up -d` 可从空目录启动：自动创建持久化目录，内置模式通过 HTTP 80 或 HTTPS 443 初始化，完成后 HTTP 恢复 HTTPS 跳转。
+- 内置初始化提交 Cloudflare Token，预览并确认自动配置灰云通配符 DNS，随后申请证书；外部及隔离测试模式不要求本机 Token。Token 输入处提供申请链接，保留临时 HTTPS 入口与可信证书发布门禁。
 - 单命令容器安装与 Web 首次配置向导；业务域名和网络策略不再带个人化默认值。
 - 使用随机回环端口和独立命名卷的从零验证环境。
 - 首次发布三步引导，以及服务和发布页面的可操作空状态。
@@ -32,7 +32,7 @@
 - HTTP 适配层由 chi/ServeMux 统一为 Gin 原生路由与 handler，集中处理严格 JSON、错误响应、请求 ID、恢复、认证及 CSRF，同时保持 `/api/v1` 契约不变。
 - 数据持久化统一由 GORM 管理，并使用基于 modernc SQLite 的纯 Go Dialector；继续支持无 CGO 构建和 ARM64 交叉编译。
 - 数据库兼容边界收紧为空库或结构完整的当前 v6；v1–v5 数据库会在不写入的情况下拒绝启动，不提供旧版本升级或迁移入口。
-- Setup 无需预配置 Origin 或一次性凭证；只允许私网 TCP 对端、IP 字面量 Host 和与当前请求精确一致的 HTTPS Origin。第一个有效提交原子成为管理员。
+- Setup 无需预配置 Origin 或一次性凭证；只允许私网 TCP 对端、IP 字面量 Host 和与当前请求精确一致的 HTTP/HTTPS Origin。第一个有效提交原子成为管理员。
 - 首次配置只输入 Homelab 域名；控制台固定派生为 `caddyadmin.<homelab>`，Public 域名初始为空且 Public 服务暂时禁用。
 - Cloudflare 签发期间使用临时控制台证书；初始化地址提供受 LAN、认证、Origin 与 CSRF 保护的临时管理入口，正式入口就绪被读回后保留五分钟再关闭。
 - 托管业务配置存入 SQLite；当前 v6 数据库启动时只做结构验证，不自动改写历史数据或启动快照。

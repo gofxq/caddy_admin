@@ -20,6 +20,7 @@ import (
 	"time"
 
 	caddyadapter "github.com/gofxq/caddy_admin/internal/adapter/caddy"
+	"github.com/gofxq/caddy_admin/internal/adapter/cloudflare"
 	"github.com/gofxq/caddy_admin/internal/adapter/gormstore"
 	"github.com/gofxq/caddy_admin/internal/adapter/httpapi"
 	"github.com/gofxq/caddy_admin/internal/application"
@@ -36,7 +37,7 @@ func main() {
 	}
 }
 func password() (string, error) {
-	fmt.Fprint(os.Stderr, "管理员密码（至少 12 字节）: ")
+	fmt.Fprint(os.Stderr, "管理员密码（至少 8 个字符，最多 256 字节）: ")
 	b, e := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	return string(b), e
@@ -263,6 +264,7 @@ func composeApplication(c config.Config, store *gormstore.Store) *application.Se
 	}
 	client := caddyadapter.NewClient(caddyadapter.Options{AdminURL: c.AdminURL, Socket: c.Socket, CaddyBinary: c.CaddyBinary, DataDir: c.DataDir})
 	return application.New(options, store, client, application.Dependencies{
+		SetupDNS: cloudflare.New(), SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
 		Resolver: net.DefaultResolver, Certificates: &caddyadapter.Probe{},
 		Snapshot: &caddyadapter.Snapshot{Path: c.ActivePath()},
 		Secrets:  &caddyadapter.SecretFile{Path: secretPath}, BootstrapCertificate: &caddyadapter.BootstrapTLS{},
@@ -380,32 +382,6 @@ func temporaryBridgeHandler(next http.Handler) http.Handler {
 	})
 }
 
-func setupRedirectHandler(httpsPort string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !setupPeerAllowed(r.RemoteAddr) || !httpapi.PrivateSetupHost(r.Host) {
-			http.Error(w, "Setup is restricted to private networks", http.StatusForbidden)
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "Use HTTPS to submit setup", http.StatusMethodNotAllowed)
-			return
-		}
-		host := r.Host
-		if value, _, err := net.SplitHostPort(host); err == nil {
-			host = value
-		}
-		host = strings.Trim(host, "[]")
-		if httpsPort != "443" {
-			host = net.JoinHostPort(host, httpsPort)
-		} else if strings.Contains(host, ":") {
-			host = "[" + host + "]"
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, "https://"+host+"/setup", http.StatusFound)
-	})
-}
-
 func setupPeerAllowed(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
@@ -458,7 +434,7 @@ func serveSetup(c config.Config, store *gormstore.Store) error {
 	defer stop()
 	additional := []*http.Server{}
 	if c.AdminURL == "" {
-		redirect := newSetupHTTPServer(":"+c.HTTPPort, setupRedirectHandler(c.HTTPSPort))
+		redirect := newSetupHTTPServer(":"+c.HTTPPort, handler)
 		listener, listenErr := net.Listen("tcp", redirect.Addr)
 		if listenErr != nil {
 			return listenErr
@@ -494,7 +470,7 @@ func serveSetup(c config.Config, store *gormstore.Store) error {
 		shutdownSetupServers(ctx, append(additional, server)...)
 	}()
 	if c.AdminURL == "" {
-		log.Printf("manager setup on HTTPS :%s; HTTP :%s redirects to HTTPS", c.HTTPSPort, c.HTTPPort)
+		log.Printf("manager setup on HTTPS :%s and private HTTP :%s", c.HTTPSPort, c.HTTPPort)
 	} else {
 		log.Printf("manager setup listening on %s", setupListen)
 	}

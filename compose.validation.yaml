@@ -1,11 +1,7 @@
 services: # 隔离测试：make validation-up；make validation-status 查询随机 HTTPS 端口。
   caddy:
-    # environment: # 可选：启用 TEST_TLS 时同时取消本行及下一行注释。
-    #   TEST_TLS: ${TEST_TLS:-false} # 用 TEST_TLS=true make validation-up 启用内部测试 CA；内置模式仍禁止校验/发布。
-    ports: !override # 仅宿主回环可达，不使用真实部署的 80/443。
-      - '127.0.0.1::80' # 随机 HTTP 端口。
-      - '127.0.0.1::443' # 随机 HTTPS 端口：打开 https://127.0.0.1:查询到的端口/setup。
-      # - '127.0.0.1::443/udp' # 可选：隔离环境的 HTTP/3 随机端口。
+    environment: # 必需：隔离验证默认使用测试证书，无需真实 Cloudflare Token。
+      TEST_TLS: ${TEST_TLS:-true} # 内部测试 CA；内置模式仍禁止校验/发布。真实域名验收需显式设为 false。
     volumes: !override # 独立测试卷，不读取真实 .run；make validation-down 会删除这些卷。
       - validation_manager:/var/lib/manager
       - validation_snapshots:/srv/snapshots

@@ -92,6 +92,8 @@ type Resolver interface {
 }
 
 type SetupProbe interface {
+	DNSResults(context.Context, string, string, []string) (SetupDNSReport, error)
+	DNSMatches(context.Context, string, string, []string) error
 	ResolverReachable(context.Context, []string) bool
 	AdminDNS(context.Context, string, []string) bool
 	ExternalConsole(context.Context, string, string) bool

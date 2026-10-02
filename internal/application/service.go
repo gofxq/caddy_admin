@@ -9,6 +9,8 @@ import (
 )
 
 type Dependencies struct {
+	SetupDNS             SetupDNS
+	SetupIntent          SetupIntentStore
 	Resolver             Resolver
 	Certificates         CertificateProbe
 	Snapshot             SnapshotStore
@@ -20,6 +22,8 @@ type Dependencies struct {
 }
 
 type Service struct {
+	setupDNS            SetupDNS
+	setupIntent         SetupIntentStore
 	options             Options
 	repository          Repository
 	caddy               CaddyPort
@@ -47,6 +51,7 @@ func New(options Options, repository Repository, caddy CaddyPort, dependencies D
 	}
 	return &Service{
 		options: options, repository: repository, caddy: caddy, resolver: resolver,
+		setupDNS: dependencies.SetupDNS, setupIntent: dependencies.SetupIntent,
 		certificates: dependencies.Certificates, snapshot: dependencies.Snapshot,
 		secrets: dependencies.Secrets, bootstrapTLS: dependencies.BootstrapCertificate,
 		localAddresses: localAddresses, owned: map[string]struct{}{},

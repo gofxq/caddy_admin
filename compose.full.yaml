@@ -12,7 +12,7 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
       start_period: 20s # 启动宽限期。
       # retries: 3 # 可选：连续失败次数，默认 3 次。
     # environment: # 可选：启用下方配置时同时取消本行注释；业务策略在初始化和设置中配置，密码与 Token 不写入 Compose 或 .env。
-      # CLOUDFLARE_API_TOKEN_FILE: ${CLOUDFLARE_API_TOKEN_FILE:-} # 可选：仅自定义位置时配置；默认 DATA_DIR/secrets/cloudflare_token，Token 通过设置页提交。
+      # CLOUDFLARE_API_TOKEN_FILE: ${CLOUDFLARE_API_TOKEN_FILE:-} # 可选：仅自定义位置时配置；默认 DATA_DIR/secrets/cloudflare_token，Token 通过初始化向导或设置页提交。
       # DATA_DIR: ${DATA_DIR:-/var/lib/manager} # 可选：SQLite、锁和 secret 目录，Token 默认路径随此目录变化；改动须同步挂载，入口脚本只准备默认目录权限。
       # SNAPSHOT_DIR: ${SNAPSHOT_DIR:-/srv/snapshots} # 可选：启动快照目录；改动须同步挂载并保证 10001:10001 可写，不能手工修改 active.json。
       # CADDY_STORAGE: ${CADDY_STORAGE:-/data/caddy} # 可选：内置 Caddy 证书与 ACME 目录；须位于持久挂载内，外部实例保留远端实际 storage。
@@ -28,10 +28,10 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
       # SETUP_LISTEN: ${SETUP_LISTEN:-:8082} # 可选（仅外部）：HTTPS 初始化/交接监听；改动须同步外部端口映射的容器目标端口。
       # TEST_TLS: ${TEST_TLS:-false} # 可选（仅隔离测试）：true 使用内部测试 CA；不代表公网可信，内置模式仍禁止 Cloudflare 激活及校验/发布。
     ports: # 必需：默认 80/443；HTTP_BIND/HTTPS_BIND 是宿主绑定参数，不是容器环境变量，初始化前限制为可信 LAN/VPN。
-      - '${HTTP_BIND:-0.0.0.0:80}:80' # HTTP 跳转至 HTTPS；不接受明文初始化提交。
+      - '${HTTP_BIND:-0.0.0.0:80}:80' # 初始化前允许可信内网 HTTP Setup，完成后跳转 HTTPS。
       - '${HTTPS_BIND:-0.0.0.0:443}:443' # HTTPS 初始化、控制台和业务入口；非标准宿主端口须显式访问，默认 HTTP 跳转仍指向 443。
       # - '${HTTPS_BIND:-0.0.0.0:443}:443/udp' # 可选：启用 HTTP/3；保持 UDP 与 TCP 的 HTTPS 端口一致。
-      # - '${SETUP_BIND:-0.0.0.0:8080-8099}:8082' # 仅外部模式：替换上方内置映射；HTTPS Setup 使用范围内可用端口，查询实际端口并限制可信来源。
+      # - '${SETUP_BIND:-0.0.0.0:8082}:8082' # 仅外部模式：替换上方内置映射；HTTPS Setup 默认固定宿主端口 8082，并限制可信来源。
       # - '${MANAGER_BIND:-127.0.0.1:8081}:8080' # 仅外部模式：与上一行一起使用；默认宿主回环，远端 Caddy 按需绑定可信接口并限制来源。
       # - '127.0.0.1::80' # 仅隔离测试：替换内置映射为回环随机端口，建议直接追加 compose.validation.yaml。
       # - '127.0.0.1::443' # 仅隔离测试：HTTPS 回环随机端口；通过 compose port caddy 443 查询。
@@ -41,9 +41,9 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
     security_opt: [no-new-privileges:true] # 必需：禁止获取新增权限；不要使用 privileged 或挂载 Docker Socket。
     # extra_hosts: # 可选：使用 host.docker.internal 访问宿主机时，同时取消本行及下一行注释。
     #   - 'host.docker.internal:host-gateway' # 增加宿主网关解析，不自动发现宿主 LAN IP，也不修改 DNS 记录。
-    volumes: # 必需：四个数据目录；停服取得一致备份，包含私钥的备份须加密，外部 Caddy 数据另行保护。
-      - ./.run/manager:/var/lib/manager # SQLite、会话、实例锁和受限 secret；不得删除真实数据绕过启动失败。
-      - ./.run/snapshots:/srv/snapshots # active.json 启动快照，不作为手工配置入口。
-      - ./.run/caddy-data:/data # 证书、私钥及 ACME 状态。
-      - ./.run/caddy-config:/config # Caddy 配置目录。
-      # - ./.run/caddy-socket:/run/caddy # 可选：查看运行时 Socket；单容器内无需挂载，不属于备份数据。
+    volumes: # 必需：四个持久化目录；停服一致备份，包含私钥的备份必须加密。
+      - './.run/manager:/var/lib/manager' # SQLite、会话、实例锁和受限 secret；不得删除真实数据绕过启动失败。
+      - './.run/snapshots:/srv/snapshots' # active.json 启动快照，不作为手工配置入口。
+      - './.run/caddy-data:/data' # 证书、私钥及 ACME 状态。
+      - './.run/caddy-config:/config' # Caddy 配置目录。
+      # - './.run/caddy-socket:/run/caddy' # 可选：查看运行时 Socket；单容器内无需挂载，不属于备份数据。

@@ -34,15 +34,15 @@ function Shell(){
  if(!session.data&&session.error)return <div className="standalone"><ErrorBox error={session.error} onRetry={()=>void session.refetch()}/></div>
  if(!session.data)return <Login/>
  if(session.data.must_change)return <div className="standalone"><PasswordForm required onDone={()=>{queryClient.clear();session.refetch()}}/></div>
- const nav=[{to:'/',label:'概览',en:'Overview',icon:LayoutDashboard},{to:'/services',label:'服务',en:'Services',icon:Server},{to:'/deployments',label:'发布',en:'Deployments',icon:GitBranch},{to:'/certificates',label:'证书',en:'Certificates',icon:ShieldCheck},{to:'/audit',label:'审计',en:'Audit',icon:ScrollText},{to:'/settings',label:'设置',en:'Settings',icon:SettingsIcon}]
+ const nav=[{to:'/',label:'概览',icon:LayoutDashboard},{to:'/services',label:'服务',icon:Server},{to:'/deployments',label:'发布',icon:GitBranch},{to:'/certificates',label:'证书',icon:ShieldCheck},{to:'/audit',label:'审计',icon:ScrollText},{to:'/settings',label:'设置',icon:SettingsIcon}]
  return <div className="app-shell">
   <aside className="sidebar">
    <Link to="/" className="brand"><Waypoints size={29}/><span>Caddy<span className="brand-light"> Admin</span></span></Link>
-   <div className="workspace-label">WORKSPACE</div><div className="workspace"><span className="workspace-icon">H</span><div><strong>Homelab</strong><small>单实例控制台</small></div><ArrowUpRight size={16}/></div>
-   <div className="nav-label">管理控制台</div><nav>{nav.map(n=><Link key={n.to} to={n.to} activeOptions={{exact:true}} activeProps={{className:'active'}}><n.icon size={19}/><span>{n.label}</span><small>{n.en}</small></Link>)}</nav>
-   <div className="sidebar-bottom"><div className="sidebar-note"><ShieldCheck size={18}/><p>安全发布 · 可追溯 · 可恢复</p></div><div className="user"><span className="avatar">{session.data.username.slice(0,1).toUpperCase()}</span><div><strong>{session.data.username}</strong><small>管理员</small></div><Button variant="ghost" aria-label="登出" disabled={logout.isPending} onClick={()=>logout.mutate()}><LogOut size={17}/></Button></div></div>
+   <div className="workspace"><span className="workspace-icon">H</span><div><strong>Homelab</strong><small>单实例控制台</small></div><ArrowUpRight size={16}/></div>
+   <div className="nav-label">管理控制台</div><nav>{nav.map(n=><Link key={n.to} to={n.to} activeOptions={{exact:true}} activeProps={{className:'active'}}><n.icon size={19}/><span>{n.label}</span></Link>)}</nav>
+   <div className="sidebar-bottom"><div className="user"><span className="avatar">{session.data.username.slice(0,1).toUpperCase()}</span><div><strong>{session.data.username}</strong><small>管理员</small></div><Button variant="ghost" aria-label="登出" disabled={logout.isPending} onClick={()=>logout.mutate()}><LogOut size={17}/></Button></div></div>
   </aside>
-  <div className="main-column"><div className="topbar"><span><span className="muted">工作空间</span> <span className="slash">/</span> Homelab</span><span className="topbar-label"><ShieldCheck size={14}/> Caddy Web Admin</span></div><main><EntryMigration/><ErrorBox error={logout.error} onRetry={()=>logout.mutate()} retryLabel="重新登出"/><Outlet/></main><footer>你的服务，你的网络。<span>CADDY ADMIN · v0.1.0</span></footer></div>
+  <div className="main-column"><div className="topbar"><span><span className="muted">工作空间</span> <span className="slash">/</span> Homelab</span><span className="topbar-label"><ShieldCheck size={14}/> Caddy Web Admin</span></div><main><EntryMigration/><ErrorBox error={logout.error} onRetry={()=>logout.mutate()} retryLabel="重新登出"/><Outlet/></main><footer><span>CADDY ADMIN · v0.1.0</span></footer></div>
  </div>
 }
 function Outlet(){const session=useQuery({queryKey:['session'],queryFn:readSession,enabled:false});return <>{session.data&&session.error&&<div><ErrorBox error={session.error} onRetry={()=>void queryClient.refetchQueries({queryKey:['session']})}/></div>}<RouterOutlet/></>}

@@ -49,7 +49,7 @@ export function Deployments(){
  const summary=changeSummary(validated?.changes??[])
  const affectedDomains=[...new Set(validated?.changes.flatMap(change=>[change.before?.hostname,change.after?.hostname,change.hostname].filter((name):name is string=>!!name))??[])].join('、')||'无'
  return <>
-  <Heading eyebrow="CONFIGURATION RELEASES" title="发布" description="每一次上线之前，先看清将要发生的变化。" action={<Button variant="outline" disabled={locked} onClick={()=>{setValidated(null);void preview.refetch()}}>刷新预览</Button>}/>
+  <Heading title="发布" description="预览变更、校验配置并确认发布。" action={<Button variant="outline" disabled={locked} onClick={()=>{setValidated(null);void preview.refetch()}}>刷新预览</Button>}/>
   <DeploymentTask deployment={currentTask} error={task.error} onRefresh={()=>void task.refetch()} onDetail={setDetail}/>
   {rollback&&<div className="notice notice-amber"><span>按当前策略重新发布历史服务，会重新检查 DNS 与安全规则，并保留当前草稿。当前不提供离线快照恢复。</span><Button variant="ghost" onClick={()=>rollbackTo('')}>退出回滚</Button></div>}
   <ErrorBox error={preview.error} onRetry={()=>void preview.refetch()}/><ErrorBox error={validate.error}/><ErrorBox error={publish.error}/>

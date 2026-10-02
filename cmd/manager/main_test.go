@@ -107,27 +107,24 @@ func TestSetupAccessAllowsPrivatePeersAndIgnoresForwardedHeaders(t *testing.T) {
 	}
 }
 
-func TestSetupRedirectRequiresPrivatePeerHostAndReadOnlyRequest(t *testing.T) {
-	handler := setupRedirectHandler("443")
+func TestHTTPSetupAcceptsPrivateRequestsAndRejectsPublicSources(t *testing.T) {
+	handler := setupAccessHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	for _, test := range []struct {
 		remote, host, method string
 		want                 int
 	}{
-		{"192.168.1.20:1234", "192.168.1.10", "GET", 302},
+		{"192.168.1.20:1234", "192.168.1.10", "GET", 204},
 		{"192.168.1.20:1234", "evil.example.com", "GET", 403},
 		{"203.0.113.20:1234", "192.168.1.10", "GET", 403},
-		{"192.168.1.20:1234", "192.168.1.10", "POST", 405},
+		{"192.168.1.20:1234", "192.168.1.10", "POST", 204},
 	} {
-		request := httptest.NewRequest(test.method, "http://"+test.host+"/", nil)
+		request := httptest.NewRequest(test.method, "http://"+test.host+"/setup", nil)
 		request.RemoteAddr = test.remote
 		request.Header.Set("X-Forwarded-For", "192.168.1.20")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != test.want {
 			t.Fatalf("%+v = %d", test, response.Code)
-		}
-		if response.Code == 302 && response.Header().Get("Location") != "https://192.168.1.10/setup" {
-			t.Fatal(response.Header())
 		}
 	}
 }

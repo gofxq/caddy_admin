@@ -236,3 +236,28 @@ func TestSecretFileValidatesAndPersistsPrivateToken(t *testing.T) {
 		t.Fatalf("secret = %q mode=%v", raw, info.Mode().Perm())
 	}
 }
+
+func TestSetupIntentPersistsOnlyNonSecretMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets", "setup_dns_intent.json")
+	store := &SetupIntentFile{Path: path}
+	intent := application.SetupIntent{Plan: application.SetupDNSPlan{Name: "*.h.example.com", Address: "192.168.1.6", Fingerprint: "before"}, ConfigurationHash: "settings", SnapshotHash: "snapshot"}
+	if err := store.Write(intent); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("intent permissions", err)
+	}
+	reopened := &SetupIntentFile{Path: path}
+	after, err := reopened.Read()
+	if err != nil || after != intent {
+		t.Fatal("intent did not survive restart", after, err)
+	}
+	if err = reopened.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	after, err = reopened.Read()
+	if err != nil || after.Plan.Fingerprint != "" {
+		t.Fatal(after, err)
+	}
+}

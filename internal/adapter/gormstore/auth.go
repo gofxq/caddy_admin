@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofxq/caddy_admin/internal/domain"
 	"golang.org/x/crypto/argon2"
 	"gorm.io/gorm"
 )
@@ -17,8 +18,8 @@ import (
 const SessionLifetime = 12 * time.Hour
 
 func passwordHash(password string) (string, error) {
-	if len(password) < 12 || len(password) > 256 {
-		return "", invalid("密码长度必须为 12–256 字节")
+	if err := domain.ValidatePassword(password); err != nil {
+		return "", err
 	}
 	salt := ID()
 	key := argon2.IDKey([]byte(password), []byte(salt), 2, 64*1024, 2, 32)

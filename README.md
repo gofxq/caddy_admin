@@ -1,6 +1,13 @@
-# Caddy Web Admin
+# 🔑 Caddy Web Admin
 
-单容器部署的中文 Caddy 反向代理控制台，支持自动 HTTPS、服务草稿、配置校验、确认发布和在线回滚。
+> Caddy 反向代理控制台，用于个人 Homelab、小型内网或单管理员的自托管环境。
+
+### 用单容器完成内网所有服务的 https 配置和管理，为 NAS、影音、开发工具等服务提供统一域名和 HTTPS 入口。
+
+## 一个🌰
+![usage](docs/static/caddy_admin_usage.excalidraw.svg)
+
+实线表示访问流量，虚线表示配置、解析或证书管理。域名解析到 Caddy 的入口 IP，由 Caddy 转发到对应的内网服务。
 
 ## 快速部署
 
@@ -13,11 +20,13 @@ curl -fsSL https://raw.githubusercontent.com/gofxq/caddy_admin/HEAD/compose.yaml
 docker compose up -d
 ```
 
-打开 `https://服务器IP/setup` 完成初始化，再在设置页提交 Cloudflare Token。首次自签名证书提示属于预期；数据保存在当前目录的 `.run/`。
+或者从这里复制 [compose.yaml](compose.yaml)。
+
+打开 `http://服务器内网IP/setup`，按向导创建管理员、填写 Cloudflare Token 并确认 DNS 变更，自动配置通配符解析与申请证书。HTTP 初始化仅用于可信内网，也可从 HTTPS 打开；完成后切换 HTTPS，签发期间可能出现临时证书提示。数据默认保存在 `.run/`，可在 Compose 的 `volumes` 中[自定义数据目录](docs/operations.md#持久化)。
 
 默认使用 `ghcr.io/gofxq/caddy-admin:latest`，无需 clone 源码或本地构建。
 
-## 使用流程
+## 完整流程
 ![workflow](docs/static/caddy_admin.excalidraw.svg)
 
 保存草稿不会影响线上，确认发布后才生效。

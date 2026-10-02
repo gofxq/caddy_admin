@@ -10,16 +10,21 @@
 flowchart TD
     START[准备域名与可信 LAN/VPN] --> DEPLOY[拉取预构建镜像或使用源码构建覆盖]
     DEPLOY --> MODE{Caddy 模式}
-    MODE -->|内置| BUILTIN[默认 80/443，HTTPS 初始化]
+    MODE -->|内置| BUILTIN[HTTP 80 或 HTTPS 443 初始化]
     MODE -->|外部| EXTERNAL[配置 Admin API、Manager 地址与远端反代]
-    BUILTIN --> SETUP[创建管理员，配置域名、网络与 DNS]
+    BUILTIN --> SETUP[创建管理员，配置域名与网络]
     EXTERNAL --> SETUP
-    SETUP --> HANDOFF[保存初始化结果，查询入口交接状态]
+    SETUP --> DNSMODE{DNS 配置模式}
+    DNSMODE -->|内置| AUTODNS[填写 Token 与私网 IP，预览并确认通配符 DNS]
+    DNSMODE -->|外部| MANUALDNS[手动配置远端 DNS 与证书凭据]
+    AUTODNS --> DNSWRITE[执行已确认的 DNS 变更]
+    DNSWRITE --> HANDOFF
+    MANUALDNS --> HANDOFF[完成对应模式初始化，转到 HTTPS 交接]
     HANDOFF --> LOGIN[从可用的控制台入口登录]
 
     LOGIN --> DRAFT[新建、修改、启停或删除服务草稿]
     LOGIN --> CERT{证书准备}
-    CERT -->|内置| TOKEN[设置页提交 Token，等待可信证书]
+    CERT -->|内置| TOKEN[使用向导 Token 自动签发，等待可信证书]
     CERT -->|外部| REMOTE[在远端管理凭据与证书，核对连通性]
     TOKEN --> READY[核对模式相关的发布前提]
     REMOTE --> READY
@@ -55,48 +60,60 @@ flowchart TD
 
 | 场景         | 当前入口与职责                                                                                                                      |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 默认内置模式 | `compose.yaml` 拉取 `ghcr.io/gofxq/caddy-admin:latest`；打开 `https://服务器IP/setup`，80 仅跳转 HTTPS                              |
+| 默认内置模式 | `compose.yaml` 拉取 `ghcr.io/gofxq/caddy-admin:latest`；打开 `http://服务器内网IP/setup`；初始化后 HTTP 跳转 HTTPS                              |
 | 本地源码构建 | 追加 `compose.build.yaml`，使用独立的 `caddy-admin:local` 标签                                                                      |
-| 外部 Caddy   | 追加 `compose.external.yaml`，配置 `CADDY_ADMIN_URL`、`MANAGER_DIAL`；查询 8082 的实际 HTTPS Setup 映射，宿主 80/443 留给远端 Caddy |
-| 隔离验证     | 构建当前源码，使用 `compose.validation.yaml` 的随机回环端口和独立测试卷，不读取真实 `.run/`                                         |
+| 外部 Caddy   | 追加 `compose.external.yaml`，配置 `CADDY_ADMIN_URL`、`MANAGER_DIAL`；HTTPS Setup 默认使用宿主 8082，宿主 80/443 留给远端 Caddy |
+| 隔离验证     | 构建当前源码，使用 `compose.validation.yaml` 的随机回环端口和独立测试卷，默认测试 CA 且不读取真实 `.run/`                                         |
 
-默认内置模式没有随机 Setup 端口。第一次安装不需要提前填写密码、Token 或 `.env`；管理员密码通过 HTTPS 向导设置。第一个有效提交创建唯一管理员，初始化前须将入口限制在可信 LAN/VPN。
+默认内置模式没有随机 Setup 端口。第一次安装不需要提前填写密码、Token 或 `.env`；管理员密码和 Cloudflare Token 在向导填写。HTTP 明文传输仅用于可信内网，也可从 HTTPS 初始化。第一个有效提交创建唯一管理员，初始化前须将入口限制在可信 LAN/VPN。
 
 ```mermaid
 flowchart TD
-    OPEN[打开 HTTPS Setup] --> ADMIN[创建管理员，可选上传导出的业务配置]
-    ADMIN --> DOMAIN[核对 Homelab 域名与派生控制台地址]
-    DOMAIN --> NETWORK[填写可信来源、上游范围与可选高级策略]
-    NETWORK --> DNS[按指引设置通配符 DNS，选择仅 DNS 灰云]
-    DNS --> PRECHECK[重新检查字段、网络与服务端 DNS]
+    OPEN[可信内网打开 HTTP 80 或 HTTPS Setup] --> ADMIN[管理员与可选配置导入]
+    ADMIN --> IMPORTED{是否采用导入配置}
+    IMPORTED -->|是| REVIEW[集中核对配置与草稿，可展开修改]
+    IMPORTED -->|否| DOMAIN[填写 Homelab 域名]
+    DOMAIN --> NETWORK[确认可信网络与上游范围]
+    NETWORK --> MODE{内置非测试模式}
+    REVIEW --> MODE
+    MODE -->|是| TOKEN[填写 Token 与 Caddy 地址，浏览器 DoH 默认 Cloudflare]
+    TOKEN --> DNS[只读预览 DNS 变更]
+    DNS --> CONFIRM[勾选影响并确认配置，立即写入 Cloudflare]
+    CONFIRM --> QUERY[单独检查 DNS，浏览器 DoH 展示真实查询结果]
+    QUERY -->|未通过| QUERY
+    MODE -->|否| MANUAL[手动记录与可选 DNS 查询，无本地 Token]
+    QUERY -->|通过| PRECHECK
+    MANUAL --> PRECHECK[字段、网络和服务端预检]
     PRECHECK --> STATE{预检结果}
-    STATE -->|block| CORRECT[修正阻断项，保留输入]
+    STATE -->|block| CORRECT[保留输入，修正后重查]
     CORRECT --> PRECHECK
-    STATE -->|warning| ACK[阅读影响并确认警告]
-    STATE -->|pass| SAVE[确认并原子保存初始化]
+    STATE -->|warning| ACK[阅读并确认警告]
+    STATE -->|pass| SAVE[最终确认，后端复检及核对 Cloudflare 记录]
     ACK --> SAVE
-    SAVE --> HANDOFF[查询 Manager、DNS、TLS 与路由状态]
+    SAVE --> HANDOFF[HTTP 切换 HTTPS，查询 Manager、DNS、TLS 与路由状态]
+    SAVE -->|外部成功但本地失败| RETRY[保留恢复意图，修复存储后核对已生效记录]
+    RETRY --> DNS
     HANDOFF --> ENTRY{正式入口就绪}
     ENTRY -->|否| WAIT[显示原因并继续查询，不重复提交初始化]
     WAIT --> HANDOFF
     WAIT --> TEMP{内置模式}
     TEMP -->|是| LOGIN[允许从受保护临时入口登录]
-    ENTRY -->|是| FORMAL[打开正式控制台，可取消自动跳转]
+    ENTRY -->|是| FORMAL[用户从本机打开正式控制台]
     FORMAL --> LOGIN
     LOGIN --> TASKS[按概览首次运行任务中心继续处理]
 ```
 
-DNS 步骤只生成记录指引，不自动修改 Cloudflare。内置模式从当前访问的私网 IP 提供建议；localhost 或外部模式需手工填写实际 Caddy 地址。重新检查只证明服务端能解析控制台域名，不证明记录指向建议 IP、用户设备可达或 TLS 就绪。
+内置模式 DNS 步骤提交 Token、预览并点击「确认配置」后创建或更新灰云通配符记录，相同记录复用。Token 配置处提供申请链接与最小权限说明。「检查 DNS」是独立只读操作，由浏览器通过 Cloudflare/Google DoH 查询 A/AAAA，失败后可直接重查或切换服务，不重复修改记录。服务器 DNS 在高级设置中独立配置；切换 DoH 只使查询结果失效。DNS 页面突出当前操作并说明为何不能继续。域名和用户名在本步骤反馈格式问题，网络步骤说明访问范围和上游范围的区别。预检警告确认绑定设置与具体内容，最终后端复检出现变化时重新展示并要求确认；页面不重复执行提交前预检。当前访问的私网 IP 仅作为建议；localhost 或外部模式需手工填写实际 Caddy 地址。外部模式仍手动配置远端记录。内置自动 DNS 校验控制台及随机一层子域是否仅返回目标 IP；外部或测试模式可选查询控制台和随机子域，未提供目标时只检查是否有解析结果。两者均不证明用户设备可达或 TLS 就绪。
 
 初始化默认只配置 Homelab，控制台地址为 `https://caddyadmin.<Homelab域名>`。Public 域名初始为空，当前没有界面配置入口。服务列表默认为空，显式初始化导入除外。
 
-Setup 提交后持续查询交接状态，正式入口就绪才开始可取消的跳转倒计时。内置模式可通过受 LAN、认证、Origin 与 CSRF 保护的临时入口继续登录；外部交接入口只提供静态页面和只读状态。浏览器读到正式入口就绪后，临时入口保留五分钟再关闭。
+HTTP Setup 成功提交后进入 HTTPS 交接页，响应丢失时提供 HTTPS 核对链接；HTTPS 页面持续查询交接状态，展示初始化、服务端 DNS 和 HTTPS 状态，用户自行打开正式入口，不依据服务端探测自动跳转。首次状态入口不可达显示连接失败并提供重试；提交结果未知时持续核对，确认尚未初始化才恢复输入。内置模式可通过受 LAN、认证、Origin 与 CSRF 保护的临时入口继续登录；外部交接入口只提供静态页面和只读状态。浏览器读到正式入口就绪后，临时入口保留五分钟再关闭。
 
 外部模式须预先准备控制台反代、Admin API 访问边界和远端 DNS 凭据；Setup 不会自动发布到远端实例，外部不可达也不会回退到内置 Caddy。
 
 ## 证书准备与日常发布
 
-概览的首次运行任务中心已经按模式展示正式入口、证书或外部连通性、草稿和首次成功发布的状态。内置模式在设置页提交 Token，文件默认位于 `${DATA_DIR}/secrets/cloudflare_token`；只暴露配置状态，不回显凭据。
+概览的首次运行任务中心已经按模式展示正式入口、证书或外部连通性、草稿和首次成功发布的状态。内置模式在初始化向导提交 Token，设置页可在允许的证书状态下更新，文件默认位于 `${DATA_DIR}/secrets/cloudflare_token`；只暴露配置状态，不回显凭据。
 
 内置模式须完成 Cloudflare 激活、运行配置核对和真实可信 TLS 探测，才能校验或发布服务；`TEST_TLS=true` 不能绕过该门禁。证书探测失败显示未知，内部测试 CA 不显示为公网可信。外部模式由远端管理证书，Manager 本地校验不证明远端模块、Token、存储或证书可用。
 
@@ -170,9 +187,9 @@ flowchart TD
     DRAFT --> PRESERVE[域名、网络策略与线上版本保持不变]
     PRESERVE --> PUBLISH[需要上线时另行预览、校验和确认发布]
     TARGET -->|新实例| SETUP[初始化管理员步骤上传并采用配置]
-    SETUP --> REVIEW[核对域名、网络、DNS 与服务，设置新密码]
-    REVIEW --> INIT[确认初始化，服务仅保存为草稿]
-    INIT --> TOKEN[重新配置 Token，完成对应模式的发布前提]
+    SETUP --> REVIEW[自动读取并集中核对域名、网络、解析器与服务，可展开修改；设置新密码及 Token]
+    REVIEW --> INIT[预览并确认 DNS，完成初始化，服务仅保存为草稿]
+    INIT --> TOKEN[使用本次向导提交的 Token 等待证书；外部核对远端]
     TOKEN --> PUBLISH
 ```
 

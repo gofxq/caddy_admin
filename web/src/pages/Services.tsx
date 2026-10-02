@@ -20,7 +20,7 @@ export function Services(){
  const d=q.data,list=d?filterServices(d.services,keyword,group,state):[],deleted=d?.published.filter(s=>!d.services.some(x=>x.id===s.id))??[]
  function openNew(){if(d){change.reset();setEditor({service:{...blank},revision:d.revision})}}
  return <>
-  <Heading eyebrow="SERVICE DIRECTORY" title="服务" description="为你的应用配置域名与上游，所有修改先保存为草稿。" action={<Button disabled={!d} onClick={openNew}><Plus size={17}/>新建服务</Button>}/>
+  <Heading title="服务" description="为你的应用配置域名与上游，所有修改先保存为草稿。" action={<Button disabled={!d} onClick={openNew}><Plus size={17}/>新建服务</Button>}/>
   <ErrorBox error={q.error} onRetry={()=>void q.refetch()}/><ErrorBox error={!editor&&!remove?change.error:null}/>
   <div className="notice notice-neutral"><LayersIcon/><span>草稿修订 <strong>r{d?.revision??'—'}</strong> · 保存不会立即影响线上服务。</span><Link to="/deployments" className="text-link">预览与发布 <ArrowUpRight size={14}/></Link></div>
   <section className="card">

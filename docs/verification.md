@@ -8,7 +8,7 @@
 | `make check` | Go vet 与两个 Go 模块的依赖校验 |
 | `make build` | Manager 构建、严格 TypeScript 与 Vite 构建 |
 | `make integration` | 构建固定 Caddy，验证生成、加载、快照恢复和 Cloudflare secret-file |
-| `make container-test` | 临时容器中验证内置/外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
+| `make container-test` | 临时容器中验证内置 HTTP 初始化与 HTTPS 切换、外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
 | `make web` | `127.0.0.1:5177` 演示界面，仅用于界面检查 |
 
 Compose 配置检查：
@@ -21,6 +21,8 @@ CADDY_ADMIN_URL=http://caddy.internal:2019 MANAGER_DIAL=manager.internal:8080 \
 docker compose -f compose.yaml -f compose.external.yaml config --quiet
 docker compose -f compose.yaml -f compose.build.yaml -f compose.validation.yaml config --quiet
 ```
+
+Setup 自动测试覆盖浏览器 DoH 查询、地址族与通配符、超时与格式错误、无凭据请求、配置/查询状态解耦、连接重试、警告确认指纹与 Cloudflare 记录冲突。DoH 服务的 CORS/CSP、HTTP/HTTPS 实际浏览器访问、真实 DNS 传播和证书签发仍需在专用测试环境验收。
 
 行为变更覆盖主路径、边界、冲突、异常和权限；发布/恢复变更另覆盖断联、崩溃核对及数据保留。测试不用真实 Token、生产数据库或生产 Caddy；`TEST_TLS=true` 仅供隔离夹具，测试 CA 不代表公网信任。
 

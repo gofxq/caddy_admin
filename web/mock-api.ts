@@ -1,4 +1,5 @@
 import {parseConfiguration} from "./src/configuration.ts";
+import {validNewPassword} from "./src/password.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { Plugin } from "vite";
 import type {
@@ -286,6 +287,8 @@ export function createMockApi() {
     const path = url.pathname;
     const input =
       body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    if(method==="GET"&&path==="/setup/status")return ok({initialized:true,external_caddy:false,test_tls:false,resolver_suggestions:[]});
+    if(method==="POST"&&path.startsWith("/setup/"))return fail(409,"conflict","演示实例已经初始化，不会执行 Cloudflare DNS 操作");
     if (method === "GET" && path === "/auth/session")
       return authenticated
         ? ok({
@@ -307,6 +310,9 @@ export function createMockApi() {
       });
     }
     if (!authenticated) return fail(401, "unauthorized", "请先登录演示会话");
+    if (method === "POST" && path === "/auth/password" &&
+      (typeof input.password !== "string" || !validNewPassword(input.password)))
+      return fail(422, "invalid", "密码至少 8 个字符，最多 256 字节");
     if (
       method === "POST" &&
       (path === "/auth/logout" || path === "/auth/password")

@@ -26,6 +26,6 @@ it('shows that the optional Public domain is not configured',async()=>{
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({config:{origin:'https://caddyadmin.home.example.com',public_domain:'',homelab_domain:'home.example.com',admin_domain:'caddyadmin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'}}),{status:200})))
  const qc=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})
  render(<QueryClientProvider client={qc}><Settings/></QueryClientProvider>)
- expect(await screen.findByText('尚未配置（后续版本支持）')).toBeInTheDocument()
+ expect(await screen.findByText('尚未配置')).toBeInTheDocument()
  expect(screen.queryByText('*.')).not.toBeInTheDocument()
 })

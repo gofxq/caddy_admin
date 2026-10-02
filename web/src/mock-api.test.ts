@@ -3,6 +3,13 @@ import { createMockApi } from '../mock-api.ts'
 import type { Deployment, Preview, Service, ServiceList } from './model'
 
 describe('local mock API', () => {
+  it('enforces the new password minimum without ending a session on rejected changes',()=>{
+    const mock=createMockApi()
+    expect(mock.handle('POST','/auth/password',{current:'demo',password:'1234567'}).status).toBe(422)
+    expect(mock.handle('GET','/auth/session').status).toBe(200)
+    expect(mock.handle('POST','/auth/password',{current:'demo',password:'12345678'}).status).toBe(204)
+    expect(mock.handle('GET','/auth/session').status).toBe(401)
+  })
   it('serves every main view without a backend', () => {
     const mock = createMockApi()
     for (const path of ['/auth/session', '/overview', '/services', '/draft/preview', '/deployments', '/certificates', '/audit', '/settings']) {
@@ -66,4 +73,11 @@ it('exports portable configuration and imports only drafts with confirmation and
  const changed=mock.handle('GET','/services').body as ServiceList;expect(changed.services).toEqual([]);expect(changed.published).toEqual(initial.published);expect(changed.revision).toBe(initial.revision+1)
  expect(mock.handle('POST','/configuration/import',{configuration,revision:initial.revision,confirm:true}).status).toBe(409)
  expect(mock.handle('POST','/configuration/preview',{configuration:{...configuration,version:2}}).status).toBe(422)
+})
+
+it('reports initialized demo state and never performs Setup DNS writes',()=>{
+ const mock=createMockApi()
+ expect(mock.handle('GET','/setup/status').body).toMatchObject({initialized:true,external_caddy:false})
+ expect(mock.handle('POST','/setup/dns/preview',{token:'demo-token'}).status).toBe(409)
+ expect(mock.handle('POST','/setup/complete',{}).status).toBe(409)
 })

@@ -47,6 +47,10 @@ func WebHandler(root string, api http.Handler) http.Handler {
 		}
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("Cache-Control", "no-cache")
+		if request.URL.Path == "/setup" {
+			writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://cloudflare-dns.com/dns-query https://dns.google/resolve; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+			writer.Header().Set("Referrer-Policy", "no-referrer")
+		}
 		http.ServeContent(writer, request, name, info.ModTime(), file)
 	})
 }

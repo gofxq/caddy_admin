@@ -12,14 +12,17 @@ root = pathlib.Path(work.name)
 password = 'ContainerSmokeOnly123!'
 probe = ''
 
-def run(*args, check=True):
-    p = subprocess.run(args, capture_output=True, text=True, timeout=60)
+def run(*args, check=True, timeout=60):
+    p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     if check and p.returncode:
         raise RuntimeError(str(args) + '\n' + p.stdout + p.stderr)
     return p
 
 def docker(*args, **kw): return run('docker', *args, **kw)
-def compose(*args, **kw): return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.build.yaml','-f','compose.validation.yaml',*args,**kw)
+def compose(*args, **kw):
+    # A cold source build can exceed the ordinary request/command deadline.
+    kw.setdefault('timeout',900 if '--build' in args or 'build' in args else 60)
+    return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.build.yaml','-f','compose.validation.yaml',*args,**kw)
 def curl(*args, **kw): return run('docker','exec',probe,'curl',*args,**kw)
 
 def eventually(fn, timeout=45):
@@ -47,12 +50,13 @@ def start(name,mounts,values,alias=None,command=()):
 
 def setup(container,values,services=None):
     address=docker('inspect','-f','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',container).stdout.strip()
-    origin='https://'+address+(':8082' if values.get('CADDY_ADMIN_URL') else '')
+    https_origin='https://'+address+(':8082' if values.get('CADDY_ADMIN_URL') else '')
+    origin=https_origin if values.get('CADDY_ADMIN_URL') else 'http://'+address
     if not values.get('CADDY_ADMIN_URL'):
         redirect=curl('--noproxy','*','-s','--connect-timeout','2','--max-time','8','-D','-', '-o','/dev/null','http://'+address+'/')
-        assert '302' in redirect.stdout and 'https://'+address+'/setup' in redirect.stdout,'HTTP did not redirect to HTTPS Setup'
+        assert '307' in redirect.stdout and 'Location: /setup' in redirect.stdout,'HTTP forced HTTPS before initialization'
         insecure_post=curl('--noproxy','*','-s','--connect-timeout','2','--max-time','8','-w','\n%{http_code}','-X','POST','http://'+address+'/api/v1/setup/complete')
-        assert insecure_post.stdout.rsplit('\n',1)[1]=='405','Setup accepted a plaintext POST'
+        assert insecure_post.stdout.rsplit('\n',1)[1]=='403','HTTP Setup accepted a missing Origin'
     assert docker('exec',container,'test','-e','/var/lib/manager/secrets/setup_token',check=False).returncode!=0,'obsolete setup token was created'
     def request(path,body=None):
         args=['--noproxy','*','-sk','--connect-timeout','2','--max-time','8','-w','\n%{http_code}',origin+path]
@@ -91,6 +95,7 @@ def setup(container,values,services=None):
     unacknowledged,_=request('/api/v1/setup/complete',body)
     assert unacknowledged==409,'setup warnings were accepted without explicit acknowledgement'
     body['acknowledge_warnings']=True
+    body['warning_fingerprint']=preflight_payload['warning_fingerprint']
     if services:
         unconfirmed,_=request('/api/v1/setup/complete',body)
         assert unconfirmed==422,'imported setup accepted without explicit confirmation'
@@ -98,6 +103,7 @@ def setup(container,values,services=None):
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         results=list(pool.map(lambda _:request('/api/v1/setup/complete',body),range(2)))
     assert sorted(status for status,_ in results)==[202,409],results
+    origin=https_origin
     eventually(lambda:docker('exec',container,'manager','health',check=False).returncode==0)
     if services and not values.get('CADDY_ADMIN_URL'):
         snapshot=docker('exec',container,'cat','/srv/snapshots/active.json').stdout
@@ -108,6 +114,11 @@ def setup(container,values,services=None):
         return int(response.stdout.rsplit('\n',1)[1])!=200
     eventually(setup_api_closed)
     assert_no_redundant_setup_listener()
+    if not values.get('CADDY_ADMIN_URL'):
+        redirected=curl('--noproxy','*','-s','-D','-','-o','/dev/null','http://'+address+'/setup')
+        assert '302' in redirected.stdout and 'https://'+address+'/setup' in redirected.stdout,'HTTP did not return to HTTPS after initialization'
+        closed=curl('--noproxy','*','-s','-w','\n%{http_code}','-H','Origin: http://'+address,'-X','POST','http://'+address+'/api/v1/setup/complete')
+        assert closed.stdout.rsplit('\n',1)[1]=='404','HTTP retained initialization writes'
     after=curl('--noproxy','*','-sk','--connect-timeout','2','--max-time','8','-w','\\n%{http_code}',
                origin+'/api/v1/setup/status',check=False)
     assert after.returncode==0,'temporary handoff entry was unavailable after initialization'
@@ -196,7 +207,7 @@ try:
     eventually(lambda:docker('exec',probe,'curl','--version',check=False).returncode==0)
     upstream_ip=docker('inspect','-f','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',probe).stdout.strip()
     imported_services=[{'name':'Imported draft','group':'homelab','hostname':'imported.home.example.test','scheme':'http','host':upstream_ip,'port':8088,'enabled':False,'notes':'Isolated import fixture'}]
-    embedded_values={}
+    embedded_values={'TEST_TLS':'true'}
     embedded_mounts=data('embedded')
     embedded=start('embedded',embedded_mounts,embedded_values)
     _,hostname,processes=setup(embedded,embedded_values,imported_services)
@@ -207,7 +218,7 @@ try:
     eventually(lambda:docker('exec',embedded,'manager','health',check=False).returncode==0)
     assert 'manager serve' in docker('top',embedded,'-eo','pid,args').stdout
     exercise(request,bootstrap=True)
-    print('PASS embedded: 80/443 blank-volume setup, plaintext POST rejection, first-writer conflict, same-IP handoff, unknown-host isolation, HTTPS login, configuration import/export and restart recovery',flush=True)
+    print('PASS embedded: 80/443 blank-volume setup, HTTP initialization then HTTPS redirect, first-writer conflict, same-IP handoff, unknown-host isolation, HTTPS login, configuration import/export and restart recovery',flush=True)
 
     external_mounts=data('external-manager')
     bootstrap_host='caddyadmin.home.example.test'

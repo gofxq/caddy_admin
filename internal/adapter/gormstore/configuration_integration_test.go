@@ -99,6 +99,7 @@ func TestSetupImportedServicesAreAtomicAndRemainUnpublished(t *testing.T) {
 		t.Fatalf("failed setup left administrator: %v %v", initialized, err)
 	}
 	request.Services[0].Host = "10.0.0.10"
+	request.WarningFingerprint = fresh.service.PreflightSetupImport(context.Background(), request.Settings, request.Services).WarningFingerprint
 	if _, err := fresh.service.CompleteSetup(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
