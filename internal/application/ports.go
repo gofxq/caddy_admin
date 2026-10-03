@@ -130,3 +130,8 @@ type BootstrapCertificate interface {
 	Ensure(certPath, keyPath, origin string) error
 	Remove(certPath, keyPath string) error
 }
+
+// UpstreamProbe checks a validated numeric address from the Manager network.
+type UpstreamProbe interface {
+	Check(context.Context, string) domain.UpstreamCheck
+}

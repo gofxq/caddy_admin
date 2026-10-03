@@ -267,7 +267,8 @@ func composeApplication(c config.Config, store *gormstore.Store) *application.Se
 	}
 	client := caddyadapter.NewClient(caddyadapter.Options{AdminURL: c.AdminURL, Socket: c.Socket, CaddyBinary: c.CaddyBinary, DataDir: c.DataDir})
 	return application.New(options, store, client, application.Dependencies{
-		SetupDNS: cloudflare.New(), SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
+		UpstreamProbe: &caddyadapter.TCPUpstreamProbe{},
+		SetupDNS:      cloudflare.New(), SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
 		Resolver: net.DefaultResolver, Certificates: &caddyadapter.Probe{},
 		Snapshot: &caddyadapter.Snapshot{Path: c.ActivePath()},
 		Secrets:  &caddyadapter.SecretFile{Path: secretPath}, BootstrapCertificate: &caddyadapter.BootstrapTLS{},

@@ -15,6 +15,8 @@ import (
 )
 
 type Application interface {
+	ServiceDetail(context.Context, string) (domain.ServiceDetail, error)
+	CheckUpstream(context.Context, string, string, string) (domain.UpstreamCheck, error)
 	ExportConfiguration(context.Context) (application.Configuration, error)
 	PreviewConfiguration(context.Context, application.Configuration) (application.ConfigurationPreview, error)
 	ImportConfiguration(context.Context, application.Configuration, int64, bool, string) (domain.Draft, error)
@@ -85,6 +87,8 @@ func (api *API) Handler() http.Handler {
 	management := authenticated.Group("", api.requireChangedPassword())
 	management.GET("/overview", api.overview)
 	management.GET("/services", api.services)
+	management.GET("/services/:id", api.serviceDetail)
+	management.POST("/services/:id/check-upstream", api.checkUpstream)
 	management.POST("/services", api.saveService)
 	management.PUT("/services/:id", api.saveService)
 	management.DELETE("/services/:id", api.saveService)

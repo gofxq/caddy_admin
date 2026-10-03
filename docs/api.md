@@ -68,6 +68,8 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 | POST | `/auth/logout` | `{}`；撤销当前会话 |
 | POST | `/auth/password` | `{current,password}`；修改后撤销全部旧会话 |
 | GET | `/services` | `{revision,services,published}`，同时返回草稿与已发布业务模型 |
+| GET | `/services/{id}` | 服务详情，分别返回草稿、已发布配置、运行核对和最近相关发布 |
+| POST | `/services/{id}/check-upstream` | `{expected_hash,expected_deployment_id}`；手动 TCP 检查已发布地址快照，不接受客户端指定目标 |
 | POST | `/services` | `{revision,service}`；服务 ID 由后端生成 |
 | PUT | `/services/{id}` | `{revision,service}`；完整更新服务草稿 |
 | DELETE | `/services/{id}` | `{revision}`；仅删除草稿中的服务 |
@@ -108,6 +110,16 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 ```
 
 输出还包含 `id`、`dial`、`updated_at`；这些字段由服务器维护。Hostname 转小写、去除首尾空白与末尾点，规范化后全局唯一。名称限制 100 字节、备注 2000 字节。协议只允许 HTTP/HTTPS，端口 1–65535；禁用服务也必须保留合法配置。
+
+## 服务详情与手动检查
+
+`GET /services/{id}` 返回 `{id,revision,draft,published,draft_domain,published_domain,runtime,recent_deployments,external_caddy}`。`draft`、`published` 与对应域名对象可以为 `null`；ID 在草稿及最新成功发布中都不存在时返回 404。已删除草稿但仍有已发布配置的服务仍可读取。
+
+`runtime` 含 `{status,reachable,deployment_id,version,expected_hash,runtime_hash,checked_at,message}`，`status` 为 `matched|drift|unknown|pending`。它只核对完整配置指纹，不断言应用健康；核对期间成功发布版本变化显示 unknown，有 applying/uncertain 发布显示 pending。Caddy 读取最长 3 秒，不可达时保留详情配置并返回 unknown。`recent_deployments` 是最近 20 次全局发布中通过 changes 的 before/after 服务 ID 匹配的最多 5 条摘要，字段为 `{id,version,status,created,finished,rollback_id}`，不包含原始 Caddy JSON。
+
+`POST /services/{id}/check-upstream` 要求会话、完成首次改密、精确 Origin 与 CSRF。请求只接受 `{expected_hash,expected_deployment_id}`，分别使用刚读取的详情指纹和 `runtime.deployment_id`。发布 ID 也参与核对，名称/备注变更等相同配置 hash 的新发布同样使旧请求失效。未发布、停用、指纹过期、漂移或待核对返回 409；当前生效上游策略拒绝快照返回 422；已有检查进行中返回 429。系统地址无法安全确认时返回 503，不进行连接。
+
+检查仅访问已发布的 `dial` 数字 IP 和端口，复用域名、服务名许可、上游 CIDR 与受保护目标规则，不重新解析业务上游，不改变配置。返回 `{status,target,duration_ms,checked_at,expected_hash,deployment_id,vantage:"manager",message}`，状态为 `reachable|unreachable|unknown`。TCP 超时为 3 秒，取消或检查后无法核对原版本时显示 unknown。结果不持久化；TCP 成功不代表 HTTP 应用正常、HTTPS 证书有效或外部 Caddy 可达。
 
 ## 配置文件
 

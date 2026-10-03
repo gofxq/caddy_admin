@@ -10,6 +10,7 @@ import (
 )
 
 type Dependencies struct {
+	UpstreamProbe        UpstreamProbe
 	SetupDNS             SetupDNS
 	SetupIntent          SetupIntentStore
 	Resolver             Resolver
@@ -23,6 +24,8 @@ type Dependencies struct {
 }
 
 type Service struct {
+	upstreamProbe       UpstreamProbe
+	upstreamMu          sync.Mutex
 	setupDNS            SetupDNS
 	setupIntent         SetupIntentStore
 	options             Options
@@ -55,7 +58,8 @@ func New(options Options, repository Repository, caddy CaddyPort, dependencies D
 	}
 	service := &Service{
 		options: options, repository: repository, caddy: caddy, resolver: resolver,
-		setupDNS: dependencies.SetupDNS, setupIntent: dependencies.SetupIntent,
+		upstreamProbe: dependencies.UpstreamProbe,
+		setupDNS:      dependencies.SetupDNS, setupIntent: dependencies.SetupIntent,
 		certificates: dependencies.Certificates, snapshot: dependencies.Snapshot,
 		secrets: dependencies.Secrets, bootstrapTLS: dependencies.BootstrapCertificate,
 		localAddresses: localAddresses, owned: map[string]struct{}{},

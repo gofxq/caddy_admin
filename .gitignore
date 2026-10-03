@@ -60,6 +60,7 @@ bin/
 /caddy
 /deploy/caddy/caddy
 web/dist/
+web/dist-demo/
 web/test-results/
 web/playwright-report/
 coverage/

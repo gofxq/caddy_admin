@@ -19,3 +19,8 @@ export function serviceState(s:Service,published:Service[]){const p=published.fi
 export function filterServices(services:Service[],keyword:string,domainID:string,state:string){return services.filter(s=>(`${s.name} ${s.hostname} ${s.host}`.toLowerCase().includes(keyword.toLowerCase()))&&(!domainID||s.domain_id===domainID)&&(!state||s.enabled===(state==='enabled')))}
 export const statusLabel:Record<string,string>={success:'发布成功',failed:'发布失败',applying:'正在发布',uncertain:'待核对',valid:'证书有效',warning:'即将到期',invalid:'证书异常',unknown:'无法检测',added:'新增',deleted:'删除',updated:'修改',enabled:'启用',disabled:'停用'}
 export function date(value:string){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—'}
+
+export interface RuntimeCheck {deployment_id:string;version:number;status:'matched'|'drift'|'unknown'|'pending';reachable:boolean;expected_hash:string;runtime_hash:string;checked_at:string;message:string}
+export interface ServiceRelease {id:string;version:number;status:string;created:string;finished:string;rollback_id:string}
+export interface ServiceDetail {id:string;revision:number;draft:Service|null;published:Service|null;draft_domain:ManagedDomain|null;published_domain:ManagedDomain|null;runtime:RuntimeCheck;recent_deployments:ServiceRelease[];external_caddy:boolean}
+export interface UpstreamCheck {deployment_id:string;status:'reachable'|'unreachable'|'unknown';target:string;duration_ms:number;checked_at:string;expected_hash:string;vantage:'manager';message:string}

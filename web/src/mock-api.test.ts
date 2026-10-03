@@ -91,3 +91,18 @@ it('saves settings under the shared draft revision without changing active polic
  expect(after.revision).toBe(before.revision+1);expect(after.config.resolvers).toEqual(['9.9.9.9']);expect(after.active_config.resolvers).toEqual(before.active_config.resolvers)
  expect(mock.handle('PUT','/settings',{revision:before.revision,settings,confirm_exposure:false}).status).toBe(409)
 })
+
+it('serves detail by ID and keeps the published model for pending deletions',()=>{
+ const mock=createMockApi()
+ const before=mock.handle('GET','/services/photos').body as {draft:Service|null;published:Service|null;runtime:{expected_hash:string;deployment_id:string}}
+ expect(mock.handle('GET','/services/photos').status).toBe(200)
+ expect(before.published?.hostname).toBe('photos.home.example.com')
+ const list=mock.handle('GET','/services').body as ServiceList
+ expect(mock.handle('DELETE','/services/photos',{revision:list.revision}).status).toBe(200)
+ const after=mock.handle('GET','/services/photos').body as typeof before
+ expect(after.draft).toBeNull();expect(after.published?.id).toBe('photos')
+ expect(mock.handle('POST','/services/photos/check-upstream',{expected_hash:after.runtime.expected_hash,expected_deployment_id:after.runtime.deployment_id}).status).toBe(200)
+ expect(mock.handle('POST','/services/photos/check-upstream',{expected_hash:'stale',expected_deployment_id:after.runtime.deployment_id}).status).toBe(409)
+ expect(mock.handle('POST','/services/home/check-upstream',{expected_hash:after.runtime.expected_hash,expected_deployment_id:after.runtime.deployment_id}).status).toBe(409)
+ expect(mock.handle('GET','/services/missing').status).toBe(404)
+})

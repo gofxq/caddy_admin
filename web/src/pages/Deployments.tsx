@@ -1,3 +1,4 @@
+import {isStaticDemo} from '../request'
 import {useEffect,useState} from 'react'
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query'
 import {Link} from '@tanstack/react-router'
@@ -13,7 +14,7 @@ function DeploymentTask({deployment,error,onRefresh,onDetail}:{deployment?:Deplo
  if(!deployment)return null
  const content={
   applying:{tone:'notice-amber',title:'正在后台发布',body:'关闭页面不会取消。本任务完成前不能再次校验或发布。'},
-  success:{tone:'notice-green',title:`发布 v${deployment.version} 已成功上线`,body:`完成时间：${date(deployment.finished)}`},
+  success:{tone:'notice-green',title:`发布 v${deployment.version} ${isStaticDemo?'已模拟成功':'已成功上线'}`,body:`完成时间：${date(deployment.finished)}`},
   failed:{tone:'notice-red',title:`发布 v${deployment.version} 失败`,body:'候选配置未替换原运行配置。请刷新预览并重新校验。'},
   uncertain:{tone:'notice-red',title:`发布 v${deployment.version} 的实际状态待核对`,body:'不要重复发布。系统正在核对实际运行状态；在确认前校验和发布保持禁用。'},
  }[deployment.status]??{tone:'notice-amber',title:`发布 v${deployment.version}`,body:deployment.status}
@@ -55,7 +56,7 @@ export function Deployments(){
   {rollback&&<div className="notice notice-amber"><span>按当前策略重新发布历史服务，会重新检查 DNS 与安全规则，并保留当前草稿。当前不提供离线快照恢复。</span><Button variant="ghost" onClick={()=>rollbackTo('')}>退出回滚</Button></div>}
   <ErrorBox error={preview.error} onRetry={()=>void preview.refetch()}/><ErrorBox error={validate.error}/><ErrorBox error={publish.error}/>
   {preview.isPending?<Loading/>:p&&<section className="card">
-   <div className="section-heading"><div><h2>变更预览 <Badge>{p.changes.length} 项变更</Badge></h2><p>草稿 r{p.revision} · {rollback?'按当前策略重新发布历史服务':'与当前已发布业务模型比较'}</p></div><Badge tone={canPublish?'green':'amber'}>{canPublish?'真实配置校验通过':'等待校验'}</Badge></div>
+   <div className="section-heading"><div><h2>变更预览 <Badge>{p.changes.length} 项变更</Badge></h2><p>草稿 r{p.revision} · {rollback?'按当前策略重新发布历史服务':'与当前已发布业务模型比较'}</p></div><Badge tone={canPublish?'green':'amber'}>{canPublish?(isStaticDemo?'模拟配置校验通过':'真实配置校验通过'):'等待校验'}</Badge></div>
    {p.drift&&<div className="notice notice-amber inset">检测到外部配置漂移。当前指纹 {p.runtime_hash.slice(0,12)}，期望 {p.expected_hash.slice(0,12)}。发布将完整覆盖运行配置。</div>}
    {p.changes.length?<div className="changes">{p.changes.map((c,i)=><div className="change-row" key={i}><Badge>{statusLabel[c.kind]??c.kind}</Badge><div><strong>{c.hostname}</strong><small>之前：{serviceDescription(c.before)}</small><small>之后：{serviceDescription(c.after)}</small></div></div>)}</div>:<Empty title="没有服务变更" action={<Link className="button button-outline" to="/services">前往服务</Link>}>可以校验当前配置，或先编辑草稿。</Empty>}
    {p.settings_changed&&<div className="changes"><h3>域名与访问策略变更</h3>{(['domains','admin_domain','console_lan_only','lan_cidrs','upstream_cidrs','allowed_names','denied_ips','resolvers'] as const).filter(k=>JSON.stringify(p.settings[k])!==JSON.stringify(p.active_settings[k])).map(k=><div className="change-row" key={k}><strong>{({domains:'域名与访问范围',admin_domain:'控制台',console_lan_only:'控制台来源限制',lan_cidrs:'可信网络',upstream_cidrs:'上游许可',allowed_names:'许可服务名',denied_ips:'禁止目标',resolvers:'服务器 DNS'})[k]}</strong><div><small>之前：{JSON.stringify(p.active_settings[k])}</small><small>之后：{JSON.stringify(p.settings[k])}</small></div></div>)}</div>}

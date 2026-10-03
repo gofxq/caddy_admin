@@ -1,7 +1,7 @@
 services: # 隔离测试：make validation-up；make validation-status 查询随机 HTTPS 端口。
   caddy:
     environment: # 必需：隔离验证默认使用测试证书，无需真实 Cloudflare Token。
-      TEST_TLS: ${TEST_TLS:-true} # 内部测试 CA；内置模式仍禁止校验/发布。真实域名验收需显式设为 false。
+      # TEST_TLS: ${TEST_TLS:-true} # 内部测试 CA；内置模式仍禁止校验/发布。真实域名验收需显式设为 false。
     volumes: !override # 独立测试卷，不读取真实 .run；make validation-down 会删除这些卷。
       - validation_manager:/var/lib/manager
       - validation_snapshots:/srv/snapshots

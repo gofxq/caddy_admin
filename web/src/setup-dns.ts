@@ -1,3 +1,4 @@
+import {isStaticDemo} from './request'
 export const DOH_PRESETS=[
  {id:'cloudflare',name:'Cloudflare DoH',url:'https://cloudflare-dns.com/dns-query'},
  {id:'google',name:'Google DoH',url:'https://dns.google/resolve'},
@@ -19,23 +20,26 @@ function normalizeIP(value:string):string|null {
 }
 
 type DNSAnswer={name:string;type:number;data:string}
+function normalizeDNSName(value:string):string {
+ return value.toLowerCase().replace(/\.+$/,'')
+}
 function readAnswer(body:unknown,name:string,type:number):{addresses:string[];error:string} {
  if(!body||typeof body!=='object')throw new Error('DoH 返回格式无效，请重试或更换查询服务')
  const value=body as {Status?:number;TC?:boolean;Question?:{name:string;type:number}[];Answer?:DNSAnswer[]}
  const question=value.Question
- if(!Array.isArray(question)||question.length!==1||!question[0]||typeof question[0].name!=='string'||question[0].name.toLowerCase()!==name||question[0].type!==type||!Number.isInteger(value.Status)||value.TC)throw new Error('DoH 返回格式无效，请重试或更换查询服务')
+ if(!Array.isArray(question)||question.length!==1||!question[0]||typeof question[0].name!=='string'||normalizeDNSName(question[0].name)!==normalizeDNSName(name)||question[0].type!==type||!Number.isInteger(value.Status)||value.TC)throw new Error('DoH 返回格式无效，请重试或更换查询服务')
  if(value.Status===3)return {addresses:[],error:'域名不存在，请检查通配符记录或等待缓存更新'}
  if(value.Status!==0)return {addresses:[],error:`DNS 服务返回错误（${value.Status}），请重试或更换查询服务`}
  if(value.Answer!==undefined&&!Array.isArray(value.Answer))throw new Error('DoH 返回格式无效，请重试或更换查询服务')
- const answers=value.Answer??[],names=new Set([name])
+ const answers=value.Answer??[],names=new Set([normalizeDNSName(name)])
  if(answers.some(answer=>!answer||typeof answer.name!=='string'||typeof answer.type!=='number'||typeof answer.data!=='string'))throw new Error('DoH 返回格式无效，请重试或更换查询服务')
  // Accept addresses for the query or its returned CNAME chain, never unrelated answers.
  for(let i=0;i<answers.length;i++)for(const answer of answers){
-  if(answer.type===5&&typeof answer.name==='string'&&typeof answer.data==='string'&&names.has(answer.name.toLowerCase()))names.add(answer.data.toLowerCase().replace(/\.?$/,'.'))
+  if(answer.type===5&&typeof answer.name==='string'&&typeof answer.data==='string'&&names.has(normalizeDNSName(answer.name)))names.add(normalizeDNSName(answer.data))
  }
  const addresses:string[]=[]
  for(const answer of answers){
-  if(answer.type!==type||typeof answer.name!=='string'||!names.has(answer.name.toLowerCase()))continue
+  if(answer.type!==type||typeof answer.name!=='string'||!names.has(normalizeDNSName(answer.name)))continue
   if(!normalizeIP(answer.data)||(type===28)!==answer.data.includes(':'))throw new Error('DoH 返回地址格式无效，请重试或更换查询服务')
   addresses.push(normalizeIP(answer.data)!)
  }
@@ -49,6 +53,7 @@ export async function checkSetupDNS(domain:string,address:string,provider:DoHPro
  const nonce=new Uint8Array(12)
  crypto.getRandomValues(nonce)
  const names=[`caddyadmin.${domain}.`,`setup-check-${Array.from(nonce,b=>b.toString(16).padStart(2,'0')).join('')}.${domain}.`]
+ if(isStaticDemo)return {verified:true,queries:names.map(name=>({name,resolver:'浏览器本地模拟',addresses:target?[target]:['192.168.1.5'],status:'pass',message:'演示解析成功，未执行真实 DNS 查询'}))}
  const queries=await Promise.all(names.map(async name=>{
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),6000)
   const query:DNSQuery={name,resolver:endpoint.url,addresses:[],status:'pass',message:target?'全部解析地址与目标 IP 一致':'解析成功（未核对目标 IP）'}

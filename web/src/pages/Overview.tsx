@@ -1,3 +1,4 @@
+import {isStaticDemo} from '../request'
 import {useQuery} from '@tanstack/react-query'
 import {Link} from '@tanstack/react-router'
 import {Activity,GitCompareArrows,Server,Layers,ArrowUpRight,ShieldCheck,Globe} from 'lucide-react'
@@ -8,7 +9,7 @@ import {Heading,Loading,ErrorBox,History,Badge} from '../components/shared'
 
 function FirstRunTasks({overview,settings}:{overview:OverviewData;settings?:Settings}){
  const external=settings?.external_caddy===true
- const formal=!!settings?.config?.origin&&location.origin.toLowerCase()===settings.config.origin.toLowerCase()
+ const formal=isStaticDemo||!!settings?.config?.origin&&location.origin.toLowerCase()===settings.config.origin.toLowerCase()
  const certificateReady=settings?.certificate_status?.public_status==='ready'
  const tokenReady=settings?.token_configured===true
  const connectionReady=overview.reachable&&certificateReady
@@ -18,10 +19,10 @@ function FirstRunTasks({overview,settings}:{overview:OverviewData;settings?:Sett
   {done:connectionReady,title:'确认外部 Caddy 与可信 TLS',detail:connectionReady?'外部 Caddy 和真实 TLS 已就绪':'等待外部 Caddy 连通与真实 TLS 探测',to:'/certificates'},
   ...policyTasks,
   {done:overview.unpublished,title:'创建服务草稿',detail:overview.unpublished?'已有未发布服务草稿':'证书等待期间也可以先保存草稿',to:'/services'},
-  {done:overview.version>0,title:'完成首次成功发布',detail:'发布前仍需预览、真实校验和明确确认',to:'/deployments'},
+  {done:overview.version>0,title:'完成首次成功发布',detail:isStaticDemo?'发布前仍需预览、模拟校验和明确确认':'发布前仍需预览、真实校验和明确确认',to:'/deployments'},
  ]:[
   {done:formal,title:'使用正式控制台入口',detail:formal?'当前已从正式入口访问':'当前仍是临时入口',to:settings?.config?.origin||'/settings',external:true},
-  {done:tokenReady&&certificateReady,title:'启用可信证书',detail:certificateReady?'Cloudflare Token 与真实 TLS 均已就绪':tokenReady?'Token 已配置，等待证书激活与 TLS 探测':'配置 Cloudflare Token；等待期间可先创建草稿',to:tokenReady?'/certificates':'/settings'},
+  {done:tokenReady&&certificateReady,title:'启用可信证书',detail:certificateReady?(isStaticDemo?'Cloudflare Token 与 TLS 已模拟就绪':'Cloudflare Token 与真实 TLS 均已就绪'):tokenReady?'Token 已配置，等待证书激活与 TLS 探测':'配置 Cloudflare Token；等待期间可先创建草稿',to:tokenReady?'/certificates':'/settings'},
   ...policyTasks,
   {done:overview.unpublished,title:'创建服务草稿',detail:overview.unpublished?'已有未发布服务草稿':'保存草稿不会立即影响线上',to:'/services'},
   {done:overview.version>0,title:'完成首次成功发布',detail:'发布继续受证书、校验有效期和漂移确认门禁保护',to:'/deployments'},

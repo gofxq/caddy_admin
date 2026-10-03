@@ -1,5 +1,6 @@
 import {useState} from 'react'
 import {Waypoints} from 'lucide-react'
+import {isStaticDemo} from '../request'
 
 export type Handoff={initialized:boolean;mode:'embedded'|'external';admin_origin:string;manager_status:'ready'|'pending'|'error';dns_status:'ready'|'pending'|'error';console_status:'ready'|'pending'|'error';temporary_entry:boolean;checked_at:string}
 
@@ -11,6 +12,7 @@ export function SetupHandoff({adminOrigin,handoff,offline,externalCaddy,httpsEnt
   try{if(!navigator.clipboard)throw new Error('clipboard unavailable');await navigator.clipboard.writeText(adminOrigin);setCopyMessage('地址已复制')}
   catch{setCopyMessage('复制失败，请手动复制上方正式入口地址。')}
  }
+ if(isStaticDemo)return <div className="setup-screen"><section className="setup-card"><Waypoints size={38}/><h1>初始化已完成</h1><p className="notice notice-green">管理员、域名与 DNS 已模拟配置成功，未执行真实网络操作。</p><p className="muted">业务配置保存在当前标签页；服务仍为草稿，可进入控制台继续配置与发布。</p><div className="setup-actions"><a className="button button-primary" href="/">打开演示控制台</a></div></section></div>
  return <div className="setup-screen"><section className="setup-card">
   <Waypoints size={38}/><h1>{completed?'初始化已完成':'正在核对初始化结果'}</h1>
   <p className="muted">{completed?'管理员与设置已保存。':'提交结果暂时未知，正在核对；请勿重复提交。'}正式入口：<strong>{adminOrigin||'等待交接服务返回地址'}</strong></p>

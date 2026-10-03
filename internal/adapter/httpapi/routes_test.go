@@ -15,6 +15,7 @@ func TestManagementRouteMatrix(t *testing.T) {
 		"POST /api/v1/auth/login": true, "GET /api/v1/auth/session": true,
 		"POST /api/v1/auth/logout": true, "POST /api/v1/auth/password": true,
 		"GET /api/v1/overview": true, "GET /api/v1/services": true,
+		"GET /api/v1/services/:id": true, "POST /api/v1/services/:id/check-upstream": true,
 		"POST /api/v1/services": true, "PUT /api/v1/services/:id": true,
 		"DELETE /api/v1/services/:id": true, "GET /api/v1/draft/preview": true,
 		"GET /api/v1/draft/revisions/:revision": true, "POST /api/v1/draft/validate": true,

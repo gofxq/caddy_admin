@@ -1,4 +1,4 @@
-.PHONY: test build dev web check integration container-test single-up validation-up validation-status validation-logs validation-down
+.PHONY: test build dev web static-web check integration container-test single-up validation-up validation-status validation-logs validation-down
 test:
 	go test -race ./cmd/... ./internal/...
 	cd web && corepack pnpm test
@@ -16,16 +16,13 @@ dev:
 	cd web && corepack pnpm dev
 web:
 	cd web && corepack pnpm dev --mode mock --port 5177 --strictPort
+static-web:
+	cd web && corepack pnpm install --frozen-lockfile
+	cd web && corepack pnpm build:demo
+	cd web && corepack pnpm preview:demo
 
 single-up:
 	docker compose up -d
-reup:
-	docker compose -f compose.yaml -f compose.build.yaml down
-	sudo rm -rf -- /home/u/dev/github.com/gofxq/caddy_admin/run
-	sudo rm -rf -- /tmp/caddy-admin
-	docker compose -f compose.yaml -f compose.build.yaml up -d --build
-	docker compose -f compose.yaml -f compose.build.yaml ps
-	
 container-test:
 	docker build --target test-client -t caddy-admin:single-container-test .
 	python3 test/container_smoke.py
@@ -43,4 +40,4 @@ validation-logs:
 validation-down:
 	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml down -v
 
-validation-reup:	validation-down	validation-up
+reup-validation: validation-down validation-up validation-status
