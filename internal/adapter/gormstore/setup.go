@@ -53,7 +53,23 @@ func (s *Store) CompleteSetupWithDraft(ctx context.Context, credentials applicat
 		if err := tx.Create(&adminRow{ID: 1, Username: credentials.Username, Password: hash}).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&managedSettingsRow{ID: 1, Value: marshal(settings)}).Error; err != nil {
+		active := settings
+		active.Domains = nil
+		for _, d := range settings.Domains {
+			if domain.OneLevel(settings.AdminDomain, d.Name) {
+				active.Domains = append(active.Domains, d)
+			}
+		}
+		active.ConsoleLANOnly = false
+		active.PreviousAdminDomain = ""
+		active.PreviousOrigin = ""
+		if err := tx.Model(&draftRow{}).Where("id = ?", 1).Update("settings", marshal(settings)).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&draftRevisionRow{}).Where("revision = ?", 0).Update("settings", marshal(settings)).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&managedSettingsRow{ID: 1, Value: marshal(active)}).Error; err != nil {
 			return err
 		}
 		if len(services) > 0 {

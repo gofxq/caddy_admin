@@ -81,6 +81,7 @@ type orchestrationFixture struct {
 	store    *gormstore.Store
 	caddy    *orchestrationCaddy
 	snapshot *orchestrationSnapshot
+	settings domain.ManagedSettings
 }
 
 func newOrchestrationFixture(t *testing.T) *orchestrationFixture {
@@ -90,21 +91,25 @@ func newOrchestrationFixture(t *testing.T) *orchestrationFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	settings := domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", HomelabDomain: "home.example.test", AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}
+	settings := domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}}, AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}
 	options := application.Options{AdminURL: "http://10.0.0.4:2019", ManagerDial: "10.0.0.2:8080", ProbeAddress: "10.0.0.3:443", StaticRoot: "/srv/web", CaddyStorage: "/data/caddy", Socket: "/run/caddy.sock", HTTPPort: "80", HTTPSPort: "443", CertificateMode: domain.CertificateModeCloudflare, RuntimePolicy: settings}
-	initial, err := domain.Generate(domain.CaddyConfig{AdminURL: options.AdminURL, PublicDomain: settings.PublicDomain, HomelabDomain: settings.HomelabDomain, AdminDomain: settings.AdminDomain, LAN: settings.LAN, Resolvers: settings.Resolvers, ManagerDial: options.ManagerDial, StaticRoot: options.StaticRoot, CaddyStorage: options.CaddyStorage, Socket: options.Socket, CertificateMode: options.CertificateMode, HTTPPort: options.HTTPPort, HTTPSPort: options.HTTPSPort}, nil)
+	initial, err := domain.Generate(domain.CaddyConfig{AdminURL: options.AdminURL, Domains: settings.Domains, ConsoleLANOnly: settings.ConsoleLANOnly, AdminDomain: settings.AdminDomain, LAN: settings.LAN, Resolvers: settings.Resolvers, ManagerDial: options.ManagerDial, StaticRoot: options.StaticRoot, CaddyStorage: options.CaddyStorage, Socket: options.Socket, CertificateMode: options.CertificateMode, HTTPPort: options.HTTPPort, HTTPSPort: options.HTTPSPort}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	caddy := &orchestrationCaddy{raw: initial}
 	snapshot := &orchestrationSnapshot{raw: initial}
 	service := application.New(options, store, caddy, application.Dependencies{Snapshot: snapshot, LocalAddresses: func() ([]net.Addr, error) { return nil, nil }})
-	return &orchestrationFixture{service: service, store: store, caddy: caddy, snapshot: snapshot}
+	return &orchestrationFixture{service: service, store: store, caddy: caddy, snapshot: snapshot, settings: settings}
 }
 
 func (fixture *orchestrationFixture) validation(t *testing.T) domain.Preview {
 	t.Helper()
-	draft, err := fixture.service.SaveService(context.Background(), 0, domain.Service{Name: "Photos", Group: "homelab", Hostname: "photos.home.example.test", Scheme: "http", Host: "10.0.0.10", Port: 8080, Enabled: true}, false, "admin")
+	// Persist policy before editing drafts; runtime options do not seed SQLite.
+	if err := fixture.store.CompleteSetup(context.Background(), application.SetupCredentials{Username: "admin", Password: "a-secure-password"}, fixture.settings, domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "ready"}); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := fixture.service.SaveService(context.Background(), 0, domain.Service{Name: "Photos", DomainID: "home", Hostname: "photos.home.example.test", Scheme: "http", Host: "10.0.0.10", Port: 8080, Enabled: true}, false, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +123,7 @@ func (fixture *orchestrationFixture) validation(t *testing.T) domain.Preview {
 func TestPublishIdempotencyAndLostResponseReconcile(t *testing.T) {
 	fixture := newOrchestrationFixture(t)
 	preview := fixture.validation(t)
-	request := domain.PublishRequest{ValidationID: preview.ValidationID, Revision: preview.Revision, ExpectedHash: preview.RuntimeHash, Idempotency: "0123456789abcdef"}
+	request := domain.PublishRequest{ValidationID: preview.ValidationID, Revision: preview.Revision, ExpectedHash: preview.RuntimeHash, Idempotency: "0123456789abcdef", ConfirmExposure: true}
 	deployment, err := fixture.service.Begin(context.Background(), request, "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +157,7 @@ func (repository *staleValidationRepository) Validation(ctx context.Context, id 
 func TestExpiredValidationIsRejected(t *testing.T) {
 	fixture := newOrchestrationFixture(t)
 	preview := fixture.validation(t)
-	service := application.New(application.Options{AdminURL: "http://10.0.0.4:2019", ManagerDial: "10.0.0.2:8080", ProbeAddress: "10.0.0.3:443", StaticRoot: "/srv/web", CaddyStorage: "/data/caddy", Socket: "/run/caddy.sock", HTTPPort: "80", HTTPSPort: "443", CertificateMode: domain.CertificateModeCloudflare, RuntimePolicy: domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", HomelabDomain: "home.example.test", AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}}, &staleValidationRepository{Repository: fixture.store}, fixture.caddy, application.Dependencies{Snapshot: fixture.snapshot, LocalAddresses: func() ([]net.Addr, error) { return nil, nil }})
+	service := application.New(application.Options{AdminURL: "http://10.0.0.4:2019", ManagerDial: "10.0.0.2:8080", ProbeAddress: "10.0.0.3:443", StaticRoot: "/srv/web", CaddyStorage: "/data/caddy", Socket: "/run/caddy.sock", HTTPPort: "80", HTTPSPort: "443", CertificateMode: domain.CertificateModeCloudflare, RuntimePolicy: domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}}, AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}}, &staleValidationRepository{Repository: fixture.store}, fixture.caddy, application.Dependencies{Snapshot: fixture.snapshot, LocalAddresses: func() ([]net.Addr, error) { return nil, nil }})
 	_, err := service.Begin(context.Background(), domain.PublishRequest{ValidationID: preview.ValidationID, Revision: preview.Revision, ExpectedHash: preview.RuntimeHash, Idempotency: "fedcba9876543210"}, "admin")
 	if err == nil {
 		t.Fatal("expired validation accepted")
@@ -162,7 +167,7 @@ func TestExpiredValidationIsRejected(t *testing.T) {
 func TestSnapshotFailureMarksDeploymentUncertainAndBlocksNext(t *testing.T) {
 	fixture := newOrchestrationFixture(t)
 	preview := fixture.validation(t)
-	request := domain.PublishRequest{ValidationID: preview.ValidationID, Revision: preview.Revision, ExpectedHash: preview.RuntimeHash, Idempotency: "0123456789abcdef"}
+	request := domain.PublishRequest{ValidationID: preview.ValidationID, Revision: preview.Revision, ExpectedHash: preview.RuntimeHash, Idempotency: "0123456789abcdef", ConfirmExposure: true}
 	deployment, err := fixture.service.Begin(context.Background(), request, "admin")
 	if err != nil {
 		t.Fatal(err)

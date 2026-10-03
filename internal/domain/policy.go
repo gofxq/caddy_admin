@@ -17,15 +17,15 @@ type TargetResolver interface {
 }
 
 type TargetPolicy struct {
-	PublicDomain    string
-	HomelabDomain   string
-	AdminDomain     string
-	UpstreamCIDRs   []string
-	AllowedNames    []string
-	ReservedIPs     []string
-	DeniedIPs       []string
-	SystemEndpoints []string
-	Resolver        TargetResolver
+	Domains             []ManagedDomain
+	PreviousAdminDomain string
+	AdminDomain         string
+	UpstreamCIDRs       []string
+	AllowedNames        []string
+	ReservedIPs         []string
+	DeniedIPs           []string
+	SystemEndpoints     []string
+	Resolver            TargetResolver
 }
 
 var labelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -50,20 +50,42 @@ func ValidateManagedSettings(settings ManagedSettings) error {
 	if err := ValidateManagedNetwork(settings); err != nil {
 		return err
 	}
-	for _, value := range []string{settings.HomelabDomain, settings.AdminDomain} {
-		if !ValidDomain(value) {
-			return fmt.Errorf("invalid domain %q", value)
+	if len(settings.Domains) == 0 {
+		return fmt.Errorf("至少登记一个域名")
+	}
+	ids := map[string]bool{}
+	adminFound, previousFound := false, settings.PreviousAdminDomain == ""
+	for i, d := range settings.Domains {
+		if d.ID == "" || ids[d.ID] || !ValidDomain(d.Name) {
+			return fmt.Errorf("无效或重复域名")
 		}
+		ids[d.ID] = true
+		if d.Access != nil && *d.Access != "trusted" && *d.Access != "internet" {
+			return fmt.Errorf("无效访问范围")
+		}
+		if d.Access != nil && *d.Access == "trusted" && len(settings.LAN) == 0 {
+			return fmt.Errorf("仅可信网络的域名需要可信网段")
+		}
+		for _, other := range settings.Domains[:i] {
+			if d.Name == other.Name || strings.HasSuffix(d.Name, "."+other.Name) || strings.HasSuffix(other.Name, "."+d.Name) {
+				return fmt.Errorf("域名重复或重叠")
+			}
+		}
+		adminFound = adminFound || OneLevel(settings.AdminDomain, d.Name)
+		previousFound = previousFound || OneLevel(settings.PreviousAdminDomain, d.Name)
 	}
-	if settings.PublicDomain != "" && (!ValidDomain(settings.PublicDomain) || settings.PublicDomain == settings.HomelabDomain) {
-		return fmt.Errorf("invalid Public domain")
+	if !adminFound || !previousFound {
+		return fmt.Errorf("控制台必须是登记域名的一层子域")
 	}
-	if !OneLevel(settings.AdminDomain, settings.HomelabDomain) {
-		return fmt.Errorf("invalid domain groups or admin domain")
+	validateOrigin := func(origin, host string) bool {
+		parsed, err := url.Parse(origin)
+		return err == nil && parsed.Scheme == "https" && parsed.Hostname() == host && parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && !parsed.ForceQuery && parsed.Fragment == "" && (parsed.Port() == "" || validPort(parsed.Port()))
 	}
-	parsed, err := url.Parse(settings.Origin)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != settings.AdminDomain || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if !validateOrigin(settings.Origin, settings.AdminDomain) {
 		return fmt.Errorf("origin must be the HTTPS admin origin")
+	}
+	if (settings.PreviousAdminDomain == "") != (settings.PreviousOrigin == "") || (settings.PreviousAdminDomain != "" && (!validateOrigin(settings.PreviousOrigin, settings.PreviousAdminDomain) || settings.PreviousAdminDomain == settings.AdminDomain)) {
+		return fmt.Errorf("无效控制台交接地址")
 	}
 	if len(settings.Resolvers) == 0 {
 		return fmt.Errorf("resolvers must not be empty")
@@ -83,10 +105,11 @@ func ValidateManagedSettings(settings ManagedSettings) error {
 // ValidateManagedNetwork shares the hard network rules with the staged Setup
 // preflight, before the user has entered DNS settings.
 func ValidateManagedNetwork(settings ManagedSettings) error {
+	if settings.ConsoleLANOnly && len(settings.LAN) == 0 {
+		return fmt.Errorf("控制台来源限制需要可信网段")
+	}
 	for _, values := range [][]string{settings.LAN, settings.UpstreamCIDRs} {
-		if len(values) == 0 {
-			return fmt.Errorf("network allowlist must not be empty")
-		}
+
 		for _, value := range values {
 			if _, err := netip.ParsePrefix(value); err != nil {
 				return fmt.Errorf("invalid network %q", value)
@@ -119,16 +142,15 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 	if service.Name == "" || len(service.Name) > 100 || len(service.Notes) > 2000 {
 		return service, Invalid("名称必填且不超过 100 字节，备注不超过 2000 字节")
 	}
-	base := policy.PublicDomain
-	if service.Group == "homelab" {
-		base = policy.HomelabDomain
-	} else if service.Group != "public" {
-		return service, Invalid("无效分组")
-	} else if base == "" {
-		return service, Invalid("Public 域名尚未配置")
+	base := ""
+	for _, d := range policy.Domains {
+		if d.ID == service.DomainID {
+			base = d.Name
+			break
+		}
 	}
-	if !OneLevel(service.Hostname, base) || service.Hostname == policy.AdminDomain {
-		return service, Invalid("域名必须为分组下的一层子域且不能占用控制台")
+	if base == "" || !OneLevel(service.Hostname, base) || service.Hostname == policy.AdminDomain || (policy.PreviousAdminDomain != "" && service.Hostname == policy.PreviousAdminDomain) {
+		return service, Invalid("域名必须为所选域名的一层子域且不能占用控制台")
 	}
 	if service.Scheme != "http" && service.Scheme != "https" {
 		return service, Invalid("上游协议必须为 http 或 https")
@@ -142,7 +164,7 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 			return service, Invalid("上游不能指向管理器或 Caddy 控制入口")
 		}
 	}
-	if service.Host == policy.AdminDomain {
+	if service.Host == policy.AdminDomain || (policy.PreviousAdminDomain != "" && service.Host == policy.PreviousAdminDomain) {
 		return service, Invalid("上游不能指向控制台域名")
 	}
 	var addresses []netip.Addr

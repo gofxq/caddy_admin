@@ -25,7 +25,7 @@ func testStore(t *testing.T) *Store {
 }
 
 func validManagedSettings() domain.ManagedSettings {
-	return domain.ManagedSettings{Origin: "https://caddyadmin.home.example", HomelabDomain: "home.example", AdminDomain: "caddyadmin.home.example", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}
+	return domain.ManagedSettings{Origin: "https://caddyadmin.home.example", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example", Access: domain.DomainAccess("trusted")}}, AdminDomain: "caddyadmin.home.example", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"1.1.1.1"}}
 }
 
 func TestCompleteSetupIsAtomicAndSingleWriter(t *testing.T) {
@@ -91,7 +91,7 @@ func TestDraftConflictAndAudit(t *testing.T) {
 	if e != nil || d.Revision != 0 {
 		t.Fatal(d, e)
 	}
-	v := Service{ID: "1", Name: "Photos", Group: "homelab", Hostname: "photo.home.example.com"}
+	v := Service{ID: "1", Name: "Photos", DomainID: "home", Hostname: "photo.home.example.com"}
 	d, e = s.SaveService(ctx, 0, v, false, "admin")
 	if e != nil || d.Revision != 1 {
 		t.Fatal(d, e)
@@ -159,7 +159,7 @@ func TestOpenStoreRejectsUnsupportedSchemaWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.db.Model(&schemaVersionRow{}).Where("version = ?", currentSchemaVersion).Update("version", 5).Error; err != nil {
+	if err = s.db.Model(&schemaVersionRow{}).Where("version = ?", currentSchemaVersion).Update("version", 6).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {
@@ -168,7 +168,7 @@ func TestOpenStoreRejectsUnsupportedSchemaWithoutWriting(t *testing.T) {
 
 	if reopened, openErr := Open(path); openErr == nil {
 		reopened.Close()
-		t.Fatal("v5 database was accepted and upgraded")
+		t.Fatal("v6 database was accepted and upgraded")
 	}
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestOpenStoreRejectsUnsupportedSchemaWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.Version != 5 {
+	if row.Version != 6 {
 		t.Fatalf("rejected database was modified to version %d", row.Version)
 	}
 }
@@ -197,6 +197,6 @@ func TestOpenStoreRejectsCurrentSchemaMissingPendingIndex(t *testing.T) {
 	}
 	if reopened, openErr := Open(path); openErr == nil {
 		reopened.Close()
-		t.Fatal("v6 database missing the pending-deployment constraint was accepted")
+		t.Fatal("v7 database missing the pending-deployment constraint was accepted")
 	}
 }

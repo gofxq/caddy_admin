@@ -1,3 +1,4 @@
+import {request} from './request'
 let csrf=''
 let sessionGeneration=0
 export function setCSRF(value:string){if(csrf!==value)sessionGeneration++;csrf=value}
@@ -5,7 +6,7 @@ export class APIError extends Error {constructor(public status:number,public cod
 export async function api<T>(path:string,options:{method?:string;body?:unknown}={}):Promise<T>{
  const generation=sessionGeneration
  let response:Response
- try {response=await fetch(`/api/v1${path}`,{method:options.method??'GET',credentials:'same-origin',headers:{...(options.body!==undefined?{'Content-Type':'application/json'}:{}),...(options.method&&options.method!=='GET'?{'X-CSRF-Token':csrf}:{})},body:options.body===undefined?undefined:JSON.stringify(options.body)})}
+ try {response=await request(`/api/v1${path}`,{method:options.method??'GET',credentials:'same-origin',headers:{...(options.body!==undefined?{'Content-Type':'application/json'}:{}),...(options.method&&options.method!=='GET'?{'X-CSRF-Token':csrf}:{})},body:options.body===undefined?undefined:JSON.stringify(options.body)})}
  catch {throw new APIError(0,'network','网络连接失败，请重试')}
  let data:unknown
  try {const body=await response.text();data=body?JSON.parse(body):undefined} catch {data=undefined}

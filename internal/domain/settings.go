@@ -7,16 +7,42 @@ const (
 	CertificateModeCloudflare        CertificateMode = "cloudflare"
 )
 
+type ManagedDomain struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Access *string `json:"access"`
+}
+
+func DomainAccess(value string) *string { return &value }
+func (s ManagedSettings) Domain(id string) (ManagedDomain, bool) {
+	for _, d := range s.Domains {
+		if d.ID == id {
+			return d, true
+		}
+	}
+	return ManagedDomain{}, false
+}
+func (s ManagedSettings) AdminBase() string {
+	for _, d := range s.Domains {
+		if OneLevel(s.AdminDomain, d.Name) {
+			return d.Name
+		}
+	}
+	return ""
+}
+
 type ManagedSettings struct {
-	Origin        string   `json:"origin"`
-	PublicDomain  string   `json:"public_domain"`
-	HomelabDomain string   `json:"homelab_domain"`
-	AdminDomain   string   `json:"admin_domain"`
-	LAN           []string `json:"lan_cidrs"`
-	UpstreamCIDRs []string `json:"upstream_cidrs"`
-	AllowedNames  []string `json:"allowed_names"`
-	DeniedIPs     []string `json:"denied_ips"`
-	Resolvers     []string `json:"resolvers"`
+	Origin              string          `json:"origin"`
+	Domains             []ManagedDomain `json:"domains"`
+	ConsoleLANOnly      bool            `json:"console_lan_only"`
+	PreviousAdminDomain string          `json:"previous_admin_domain,omitempty"`
+	PreviousOrigin      string          `json:"previous_origin,omitempty"`
+	AdminDomain         string          `json:"admin_domain"`
+	LAN                 []string        `json:"lan_cidrs"`
+	UpstreamCIDRs       []string        `json:"upstream_cidrs"`
+	AllowedNames        []string        `json:"allowed_names"`
+	DeniedIPs           []string        `json:"denied_ips"`
+	Resolvers           []string        `json:"resolvers"`
 }
 
 type CertificateStatus struct {

@@ -21,8 +21,9 @@ const (
 type CaddyConfig struct {
 	Socket                    string
 	AdminURL                  string
-	PublicDomain              string
-	HomelabDomain             string
+	Domains                   []ManagedDomain
+	ConsoleLANOnly            bool
+	PreviousAdminDomain       string
 	AdminDomain               string
 	LAN                       []string
 	Resolvers                 []string
@@ -50,30 +51,60 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 	deny := func(hosts []string) any {
 		return object{"match": []any{object{"host": hosts, "not": []any{object{"remote_ip": object{"ranges": config.LAN}}}}}, "handle": []any{object{"handler": "static_response", "status_code": 403, "body": "Access restricted to configured LAN/VPN networks"}}, "terminal": true}
 	}
-	routes = append(routes, deny([]string{config.AdminDomain, "*." + config.HomelabDomain}))
+	adminHosts := []string{config.AdminDomain}
+	if config.PreviousAdminDomain != "" {
+		adminHosts = append(adminHosts, config.PreviousAdminDomain)
+	}
+	if config.ConsoleLANOnly {
+		if len(config.LAN) == 0 {
+			return nil, Invalid("控制台来源限制需要可信网段")
+		}
+		routes = append(routes, deny(adminHosts))
+	}
+	for _, d := range config.Domains {
+		if d.Access != nil && *d.Access == "trusted" {
+			if len(config.LAN) == 0 {
+				return nil, Invalid("仅可信网络的域名需要可信网段")
+			}
+			hosts := []string{}
+			for _, service := range list {
+				if service.Enabled && service.DomainID == d.ID {
+					hosts = append(hosts, service.Hostname)
+				}
+			}
+			if len(hosts) > 0 {
+				routes = append(routes, deny(hosts))
+			}
+		}
+	}
+	adminRouteIndex := len(routes)
 	security := object{"handler": "headers", "response": object{"set": object{"X-Content-Type-Options": []string{"nosniff"}, "Referrer-Policy": []string{"same-origin"}, "X-Frame-Options": []string{"DENY"}, "Content-Security-Policy": []string{"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}}}}
 	managerProxy := object{"handler": "reverse_proxy", "headers": object{"request": object{"set": object{ClientAddressHeader: []string{"{http.request.remote.host}"}}}}, "upstreams": []any{object{"dial": config.ManagerDial}}}
-	routes = append(routes, object{"match": []any{object{"host": []string{config.AdminDomain}}}, "handle": []any{security, object{"handler": "subroute", "routes": []any{
+	routes = append(routes, object{"match": []any{object{"host": adminHosts}}, "handle": []any{security, object{"handler": "subroute", "routes": []any{
 		object{"match": []any{object{"path": []string{"/api", "/api/*"}}}, "handle": []any{managerProxy}, "terminal": true},
 		object{"handle": []any{object{"handler": "vars", "root": config.StaticRoot}}},
 		object{"match": []any{object{"file": object{"try_files": []string{"{http.request.uri.path}", "/index.html"}}}}, "handle": []any{object{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}}},
 		object{"handle": []any{object{"handler": "file_server"}}},
 	}}}, "terminal": true})
 	if config.AdminURL != "" {
-		routes[1] = object{"match": []any{object{"host": []string{config.AdminDomain}}}, "handle": []any{security, managerProxy}, "terminal": true}
+		routes[adminRouteIndex] = object{"match": []any{object{"host": adminHosts}}, "handle": []any{security, managerProxy}, "terminal": true}
 	}
 	for _, service := range list {
-		base := config.PublicDomain
-		if service.Group == "homelab" {
-			base = config.HomelabDomain
-		} else if service.Group != "public" {
-			return nil, Invalid("无效分组")
+		var selected *ManagedDomain
+		for i := range config.Domains {
+			if config.Domains[i].ID == service.DomainID {
+				selected = &config.Domains[i]
+				break
+			}
 		}
-		if !OneLevel(service.Hostname, base) || service.Hostname == config.AdminDomain {
+		if selected == nil || !OneLevel(service.Hostname, selected.Name) || service.Hostname == config.AdminDomain || (config.PreviousAdminDomain != "" && service.Hostname == config.PreviousAdminDomain) {
 			return nil, Invalid("禁止生成不受管或保留域名")
 		}
 		if !service.Enabled {
 			continue
+		}
+		if selected.Access == nil || (*selected.Access != "trusted" && *selected.Access != "internet") {
+			return nil, Invalid("发布启用服务前必须配置域名访问范围")
 		}
 		if service.Dial == "" {
 			return nil, fmt.Errorf("missing validated upstream")
@@ -85,10 +116,11 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		routes = append(routes, object{"match": []any{object{"host": []string{service.Hostname}}}, "handle": []any{proxy}, "terminal": true})
 	}
 	routes = append(routes, object{"handle": []any{object{"handler": "static_response", "status_code": 404, "body": "Not found"}}, "terminal": true})
-	subjects := []string{"*." + config.HomelabDomain}
-	if config.PublicDomain != "" {
-		subjects = append(subjects, "*."+config.PublicDomain)
+	subjects := []string{}
+	for _, d := range config.Domains {
+		subjects = append(subjects, "*."+d.Name)
 	}
+	sort.Strings(subjects)
 	issuer := object{"module": "acme", "challenges": object{"dns": object{"provider": object{"name": "cloudflare", "api_token": "{env.CLOUDFLARE_API_TOKEN}"}, "resolvers": config.Resolvers}}}
 	if config.TestTLS || config.CertificateMode == CertificateModeBootstrapInternal {
 		issuer = object{"module": "internal"}
@@ -105,7 +137,7 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 	}
 	certificates := object{"automate": subjects}
 	setupEntry := config.AdminURL == "" && config.SetupCertPath != "" && config.SetupKeyPath != ""
-	setupRanges := append([]string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "169.254.0.0/16", "fe80::/10"}, config.LAN...)
+
 	tlsPolicies := []any{object{}}
 	if setupEntry {
 		certificates["load_files"] = []any{object{"certificate": config.SetupCertPath, "key": config.SetupKeyPath, "tags": []string{SetupCertificateTag}}}
@@ -113,7 +145,6 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		// Only IP literals and localhost may reach the temporary management
 		// entry. Unknown domain names continue to end at the explicit 404.
 		setupRoute := object{"match": []any{object{"expression": setupIPHostExpression}}, "handle": []any{security, object{"handler": "subroute", "routes": []any{
-			object{"match": []any{object{"not": []any{object{"remote_ip": object{"ranges": setupRanges}}}}}, "handle": []any{object{"handler": "static_response", "status_code": 403}}, "terminal": true},
 			object{"handle": []any{object{"handler": "reverse_proxy", "headers": object{"request": object{"set": object{ClientAddressHeader: []string{"{http.request.remote.host}"}}}}, "upstreams": []any{object{"dial": SetupBridgeAddress}}}}, "terminal": true},
 		}}}, "terminal": true}
 		routes = append(routes[:len(routes)-1], setupRoute, routes[len(routes)-1])
@@ -137,15 +168,15 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 			location += ":" + config.HTTPSPort
 			ipv6Location += ":" + config.HTTPSPort
 		}
-		redirectHosts := []string{config.AdminDomain}
+		redirectHosts := append([]string{}, adminHosts...)
 		for _, service := range list {
 			if service.Enabled {
 				redirectHosts = append(redirectHosts, service.Hostname)
 			}
 		}
 		result["apps"].(object)["http"].(object)["servers"].(object)["setup_redirect"] = object{"listen": []string{":" + config.HTTPPort}, "routes": []any{
-			object{"match": []any{object{"expression": `{http.request.host}.contains(':') && !{http.request.host}.startsWith('[')`, "remote_ip": object{"ranges": setupRanges}, "method": []string{"GET", "HEAD"}}}, "handle": []any{object{"handler": "static_response", "status_code": 302, "headers": object{"Location": []string{ipv6Location + "/setup"}}}}, "terminal": true},
-			object{"match": []any{object{"expression": setupIPHostExpression, "remote_ip": object{"ranges": setupRanges}, "method": []string{"GET", "HEAD"}}}, "handle": []any{object{"handler": "static_response", "status_code": 302, "headers": object{"Location": []string{location + "/setup"}}}}, "terminal": true},
+			object{"match": []any{object{"expression": `{http.request.host}.contains(':') && !{http.request.host}.startsWith('[')`, "method": []string{"GET", "HEAD"}}}, "handle": []any{object{"handler": "static_response", "status_code": 302, "headers": object{"Location": []string{ipv6Location + "/setup"}}}}, "terminal": true},
+			object{"match": []any{object{"expression": setupIPHostExpression, "method": []string{"GET", "HEAD"}}}, "handle": []any{object{"handler": "static_response", "status_code": 302, "headers": object{"Location": []string{location + "/setup"}}}}, "terminal": true},
 			object{"match": []any{object{"host": redirectHosts}}, "handle": []any{object{"handler": "static_response", "status_code": 308, "headers": object{"Location": []string{location + "{http.request.uri}"}}}}, "terminal": true},
 			object{"handle": []any{object{"handler": "static_response", "status_code": 404}}, "terminal": true},
 		}, "automatic_https": object{"disable": true}}

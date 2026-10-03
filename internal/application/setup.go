@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -11,23 +10,24 @@ import (
 )
 
 type SetupSettings struct {
-	HomelabDomain string   `json:"homelab_domain"`
-	LAN           []string `json:"lan_cidrs"`
-	UpstreamCIDRs []string `json:"upstream_cidrs"`
-	AllowedNames  []string `json:"allowed_names"`
-	DeniedIPs     []string `json:"denied_ips"`
-	Resolvers     []string `json:"resolvers"`
+	Domain         string                  `json:"domain"`
+	Resolvers      []string                `json:"resolvers"`
+	ImportSettings *domain.ManagedSettings `json:"-"`
 }
 
 type SetupRequest struct {
-	Cloudflare          *SetupCloudflare  `json:"cloudflare,omitempty"`
-	Services            []PortableService `json:"services,omitempty"`
-	ConfirmImport       bool              `json:"confirm_import,omitempty"`
-	Username            string            `json:"username"`
-	Password            string            `json:"password"`
-	Settings            SetupSettings     `json:"settings"`
-	AcknowledgeWarnings bool              `json:"acknowledge_warnings"`
-	WarningFingerprint  string            `json:"warning_fingerprint,omitempty"`
+	UseConfiguredPassword bool                    `json:"use_configured_password,omitempty"`
+	UseConfiguredToken    bool                    `json:"use_configured_token,omitempty"`
+	SetupID               string                  `json:"setup_id,omitempty"`
+	ImportSettings        *domain.ManagedSettings `json:"import_settings,omitempty"`
+	Cloudflare            *SetupCloudflare        `json:"cloudflare,omitempty"`
+	Services              []PortableService       `json:"services,omitempty"`
+	ConfirmImport         bool                    `json:"confirm_import,omitempty"`
+	Username              string                  `json:"username"`
+	Password              string                  `json:"password"`
+	Settings              SetupSettings           `json:"settings"`
+	AcknowledgeWarnings   bool                    `json:"acknowledge_warnings"`
+	WarningFingerprint    string                  `json:"warning_fingerprint,omitempty"`
 }
 
 type SetupCheck struct {
@@ -52,10 +52,15 @@ type SetupNormalizedSettings struct {
 }
 
 type SetupStatus struct {
-	TestTLS       bool     `json:"test_tls"`
-	Initialized   bool     `json:"initialized"`
-	Resolvers     []string `json:"resolver_suggestions"`
-	ExternalCaddy bool     `json:"external_caddy"`
+	AdminPasswordStatus   string   `json:"admin_password_status"`
+	CloudflareTokenStatus string   `json:"cloudflare_token_status"`
+	AdminPasswordError    string   `json:"admin_password_error,omitempty"`
+	CloudflareTokenError  string   `json:"cloudflare_token_error,omitempty"`
+	SetupID               string   `json:"setup_id"`
+	TestTLS               bool     `json:"test_tls"`
+	Initialized           bool     `json:"initialized"`
+	Resolvers             []string `json:"resolver_suggestions"`
+	ExternalCaddy         bool     `json:"external_caddy"`
 }
 
 type SetupHandoff struct {
@@ -70,12 +75,83 @@ type SetupHandoff struct {
 }
 
 func ManagedSettingsForSetup(input SetupSettings) (domain.ManagedSettings, error) {
-	homelab := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.HomelabDomain), "."))
-	settings := domain.ManagedSettings{Origin: "https://caddyadmin." + homelab, HomelabDomain: homelab, AdminDomain: "caddyadmin." + homelab, LAN: input.LAN, UpstreamCIDRs: input.UpstreamCIDRs, AllowedNames: input.AllowedNames, DeniedIPs: input.DeniedIPs, Resolvers: input.Resolvers}
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(input.Domain), "*."), "."))
+	resolvers := input.Resolvers
+	if len(resolvers) == 0 && input.ImportSettings != nil {
+		resolvers = input.ImportSettings.Resolvers
+	}
+	if len(resolvers) == 0 {
+		resolvers = []string{"1.1.1.1"}
+	}
+	settings := domain.ManagedSettings{Origin: "https://caddyadmin." + name, AdminDomain: "caddyadmin." + name,
+		Domains: []domain.ManagedDomain{{ID: name, Name: name}}, LAN: []string{}, UpstreamCIDRs: []string{}, AllowedNames: []string{}, DeniedIPs: []string{}, Resolvers: resolvers}
+	if input.ImportSettings != nil {
+		imported := input.ImportSettings
+		if imported.PreviousAdminDomain != "" || imported.PreviousOrigin != "" || imported.AdminDomain != "caddyadmin."+imported.AdminBase() || imported.Origin != "https://"+imported.AdminDomain {
+			return settings, domain.Invalid("初始化导入只支持标准 caddyadmin 控制台地址，且不得包含未完成的地址交接")
+		}
+		settings = *input.ImportSettings
+		settings.Domains = append([]domain.ManagedDomain{}, settings.Domains...)
+		settings.Resolvers = resolvers
+		settings.AdminDomain, settings.Origin = "caddyadmin."+name, "https://caddyadmin."+name
+		settings.PreviousAdminDomain, settings.PreviousOrigin = "", ""
+		found := false
+		for _, d := range settings.Domains {
+			if d.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			return settings, domain.Invalid("首个域名必须属于导入配置")
+		}
+	}
 	if err := domain.ValidateManagedSettings(settings); err != nil {
-		return domain.ManagedSettings{}, err
+		return settings, domain.Invalid(err.Error())
 	}
 	return settings, nil
+}
+
+func setupActiveSettings(candidate domain.ManagedSettings) domain.ManagedSettings {
+	active := candidate
+	active.ConsoleLANOnly = false
+	active.PreviousAdminDomain, active.PreviousOrigin = "", ""
+	active.Domains = []domain.ManagedDomain{}
+	for _, d := range candidate.Domains {
+		if domain.OneLevel(candidate.AdminDomain, d.Name) {
+			active.Domains = append(active.Domains, d)
+			break
+		}
+	}
+	return active
+}
+
+func credentialStatus(value string, validate func(string) error) (string, string) {
+	if value == "" {
+		return "missing", ""
+	}
+	if err := validate(value); err != nil {
+		return "invalid", err.Error()
+	}
+	return "ready", ""
+}
+
+func (service *Service) configuredToken(token string, useConfigured bool, setupID string) (string, error) {
+	if useConfigured {
+		if setupID != service.setupID || service.options.SetupToken == "" {
+			return "", domain.Conflict("预配置凭据确认已失效，请重新读取初始化状态并确认")
+		}
+		if token != "" {
+			return "", domain.Invalid("已选择预配置 Token，不接受重复输入")
+		}
+		token = service.options.SetupToken
+	} else if service.options.SetupToken != "" && !service.externalCaddy() && !service.options.TestTLS {
+		return "", domain.Invalid("请确认使用已配置的 Cloudflare Token")
+	}
+	return token, domain.ValidateCloudflareToken(token)
+}
+
+func (service *Service) ConfiguredSetupToken(setupID string) (string, error) {
+	return service.configuredToken("", true, setupID)
 }
 
 func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
@@ -86,7 +162,10 @@ func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
 	if service.resolverSuggestions != nil {
 		resolvers = service.resolverSuggestions()
 	}
-	return SetupStatus{Initialized: initialized, Resolvers: resolvers, ExternalCaddy: service.externalCaddy(), TestTLS: service.options.TestTLS}, err
+	status := SetupStatus{Initialized: initialized, Resolvers: resolvers, ExternalCaddy: service.externalCaddy(), TestTLS: service.options.TestTLS, SetupID: service.setupID}
+	status.AdminPasswordStatus, status.AdminPasswordError = credentialStatus(service.options.SetupPassword, domain.ValidatePassword)
+	status.CloudflareTokenStatus, status.CloudflareTokenError = credentialStatus(service.options.SetupToken, domain.ValidateCloudflareToken)
+	return status, err
 }
 
 func (service *Service) SetupHandoff(ctx context.Context) SetupHandoff {
@@ -138,11 +217,7 @@ func setupCheck(id, status, message string) SetupCheck {
 
 func (service *Service) PreflightSetup(ctx context.Context, input SetupSettings) SetupPreflight {
 	result := SetupPreflight{CanComplete: true, Checks: make([]SetupCheck, 0, 5)}
-	networkErr := domain.ValidateManagedNetwork(domain.ManagedSettings{LAN: input.LAN, UpstreamCIDRs: input.UpstreamCIDRs, AllowedNames: input.AllowedNames, DeniedIPs: input.DeniedIPs})
-	result.NetworkValid = networkErr == nil
-	if networkErr != nil {
-		result.NetworkError = networkErr.Error()
-	}
+	result.NetworkValid = true
 	settings, err := ManagedSettingsForSetup(input)
 	if err != nil {
 		result.CanComplete = false
@@ -150,17 +225,6 @@ func (service *Service) PreflightSetup(ctx context.Context, input SetupSettings)
 	} else {
 		result.Normalized = SetupNormalizedSettings{ManagedSettings: settings, AdminOrigin: settings.Origin}
 		result.Checks = append(result.Checks, setupCheck("settings_valid", "pass", "设置格式和安全边界有效"))
-	}
-	openNetwork := false
-	for _, value := range append(append([]string{}, input.LAN...), input.UpstreamCIDRs...) {
-		if prefix, parseErr := netip.ParsePrefix(strings.TrimSpace(value)); parseErr == nil && prefix.Bits() == 0 {
-			openNetwork = true
-		}
-	}
-	if openNetwork {
-		result.Checks = append(result.Checks, setupCheck("network_scope", "warning", "网络范围包含全部地址，请确认这符合预期"))
-	} else {
-		result.Checks = append(result.Checks, setupCheck("network_scope", "pass", "网络范围未开放到全部地址"))
 	}
 	resolverOK, dnsOK, consoleOK := false, false, false
 	if service.setupProbe != nil && err == nil {
@@ -234,6 +298,21 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	if len(request.Username) == 0 || len(request.Username) > 64 {
 		return "", domain.Invalid("用户名必须为 1–64 字节")
 	}
+	if request.UseConfiguredPassword {
+		if request.SetupID != service.setupID || service.options.SetupPassword == "" {
+			return "", domain.Conflict("预配置密码确认已失效，请重新读取初始化状态")
+		}
+		if request.Password != "" {
+			return "", domain.Invalid("已选择预配置密码，不接受重复输入")
+		}
+		request.Password = service.options.SetupPassword
+	} else if service.options.SetupPassword != "" {
+		return "", domain.Invalid("请确认使用已配置的管理员密码")
+	}
+	request.Settings.ImportSettings = request.ImportSettings
+	if request.Cloudflare != nil && request.UseConfiguredToken {
+		request.Cloudflare.UseConfiguredToken, request.Cloudflare.SetupID = true, request.SetupID
+	}
 	if err := domain.ValidatePassword(request.Password); err != nil {
 		return "", err
 	}
@@ -253,7 +332,7 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	if service.snapshot == nil {
 		return "", domain.Invalid("启动快照存储未配置")
 	}
-	if len(request.Services) > 0 && !request.ConfirmImport {
+	if (len(request.Services) > 0 || request.Settings.ImportSettings != nil) && !request.ConfirmImport {
 		return "", domain.Invalid("请确认导入服务仅保存为草稿")
 	}
 	imported, err := service.normalizeImportedServices(ctx, settings, request.Services, nil)
@@ -261,7 +340,7 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		return "", err
 	}
 	options := service.options
-	options.RuntimePolicy = settings
+	options.RuntimePolicy = setupActiveSettings(settings)
 	certificate := domain.CertificateStatus{Mode: domain.CertificateModeBootstrapInternal, ActivationStatus: "idle", PublicStatus: "unknown"}
 	if options.AdminURL != "" {
 		certificate = domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "pending"}
@@ -317,9 +396,13 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	}
 	if automaticDNS {
 		cf := request.Cloudflare
+		cf.Token, err = service.configuredToken(cf.Token, cf.UseConfiguredToken, cf.SetupID)
+		if err != nil {
+			return "", err
+		}
 		dnsContext, cancelDNS := context.WithTimeout(ctx, 30*time.Second)
 		defer cancelDNS()
-		plan, previewErr := service.setupDNS.Preview(dnsContext, cf.Token, settings.HomelabDomain, cf.Address)
+		plan, previewErr := service.setupDNS.Preview(dnsContext, cf.Token, strings.TrimPrefix(settings.AdminDomain, "caddyadmin."), cf.Address)
 		if previewErr != nil {
 			return "", previewErr
 		}
@@ -373,6 +456,10 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	if automaticDNS {
 		_ = service.setupIntent.Remove()
 	}
-	service.options = options
+	service.setActivePolicy(options.RuntimePolicy)
 	return strings.TrimRight(settings.Origin, "/"), nil
+}
+
+func (service *Service) ResolveSetupToken(token string, useConfigured bool, setupID string) (string, error) {
+	return service.configuredToken(token, useConfigured, setupID)
 }

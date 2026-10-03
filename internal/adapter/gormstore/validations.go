@@ -2,6 +2,7 @@ package gormstore
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/gofxq/caddy_admin/internal/application"
@@ -22,7 +23,7 @@ func (s *Store) SaveValidation(ctx context.Context, record validationRecord, act
 		if err := tx.Where("created < ?", time.Now().Add(-time.Hour).Unix()).Delete(&validationRow{}).Error; err != nil {
 			return err
 		}
-		row := validationRow(record)
+		row := validationRow{ID: record.ID, Revision: record.Revision, Config: record.Config, Services: record.Services, Settings: marshal(record.Settings), BaseHash: record.BaseHash, PolicyHash: record.PolicyHash, RollbackID: record.RollbackID, Created: record.Created}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -35,5 +36,9 @@ func (s *Store) Validation(ctx context.Context, id string) (validationRecord, er
 	if isMissing(err) {
 		return validationRecord{}, notFound("校验记录不存在")
 	}
-	return validationRecord(row), err
+	out := validationRecord{ID: row.ID, Revision: row.Revision, Config: row.Config, Services: row.Services, BaseHash: row.BaseHash, PolicyHash: row.PolicyHash, RollbackID: row.RollbackID, Created: row.Created}
+	if err == nil {
+		err = json.Unmarshal([]byte(row.Settings), &out.Settings)
+	}
+	return out, err
 }

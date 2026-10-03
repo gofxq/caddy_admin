@@ -11,7 +11,7 @@ function errorGuidance(error:unknown){
   case 'network':case 'http_error':case 'invalid_response':case 'unavailable':case 'system_resolution':return {impact:'当前页面无法确认请求结果；已有数据不会被页面自动覆盖。',next:'检查 Caddy、数据库和网络连接，核对实际状态后再重试。'}
   case 'conflict':return {impact:'其他操作已改变当前状态，本次操作没有按旧状态继续。',next:'刷新页面并重新核对变更，再重新提交。'}
   case 'validation':return {impact:'输入未通过服务端校验，当前表单内容仍会保留。',next:'按上方原因修正输入后再次提交。'}
-  case 'rate_limited':return {impact:'系统暂时拒绝新的登录尝试。',next:'等待提示的时间后再试，不要连续提交。'}
+  case 'rate_limited':return {impact:'系统暂时拒绝新的请求。',next:'等待提示的时间后再试，不要连续提交。'}
   case 'credentials':return {impact:'凭据未通过验证，当前会话不会因此自动退出。',next:'检查当前密码或登录信息后再试。'}
   default:return null
  }

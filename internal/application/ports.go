@@ -15,6 +15,7 @@ type ValidationRecord struct {
 	PolicyHash string
 	RollbackID string
 	Created    int64
+	Settings   domain.ManagedSettings
 }
 
 type SetupCredentials struct {
@@ -23,6 +24,7 @@ type SetupCredentials struct {
 }
 
 type AuthRepository interface {
+	RevokeSessions(context.Context) error
 	Login(context.Context, string, string) (domain.Session, error)
 	Session(context.Context, string) (domain.Session, error)
 	Logout(context.Context, string) error
@@ -58,6 +60,7 @@ type AuditRepository interface {
 }
 
 type SettingsRepository interface {
+	SaveSettings(context.Context, int64, domain.ManagedSettings, string) (domain.Draft, error)
 	CompleteSetupWithDraft(context.Context, SetupCredentials, domain.ManagedSettings, domain.CertificateStatus, []domain.Service) error
 	ManagedSettings(context.Context) (domain.ManagedSettings, error)
 	CertificateStatus(context.Context) (domain.CertificateStatus, error)
@@ -126,4 +129,9 @@ type SecretStore interface {
 type BootstrapCertificate interface {
 	Ensure(certPath, keyPath, origin string) error
 	Remove(certPath, keyPath string) error
+}
+
+// UpstreamProbe checks a validated numeric address from the Manager network.
+type UpstreamProbe interface {
+	Check(context.Context, string) domain.UpstreamCheck
 }

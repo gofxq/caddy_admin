@@ -77,7 +77,7 @@ func TestManagerCommandSurface(t *testing.T) {
 	}
 }
 
-func TestSetupAccessAllowsPrivatePeersAndIgnoresForwardedHeaders(t *testing.T) {
+func TestSetupAccessAllowsPublicAndPrivatePeersWithoutSourceFilter(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	handler := setupAccessHandler(next)
 
@@ -102,20 +102,22 @@ func TestSetupAccessAllowsPrivatePeersAndIgnoresForwardedHeaders(t *testing.T) {
 	request.Header.Set("X-Forwarded-For", "10.23.45.20")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("public peer bypassed setup filter: %d", response.Code)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("public peer could not open Setup: %d", response.Code)
 	}
 }
 
-func TestHTTPSetupAcceptsPrivateRequestsAndRejectsPublicSources(t *testing.T) {
+func TestHTTPSetupAcceptsPublicPrivateAndHostnameRequests(t *testing.T) {
 	handler := setupAccessHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	for _, test := range []struct {
 		remote, host, method string
 		want                 int
 	}{
 		{"192.168.1.20:1234", "192.168.1.10", "GET", 204},
-		{"192.168.1.20:1234", "evil.example.com", "GET", 403},
-		{"203.0.113.20:1234", "192.168.1.10", "GET", 403},
+		{"192.168.1.20:1234", "setup.example.com", "GET", 204},
+		{"203.0.113.20:1234", "192.168.1.10", "GET", 204},
+		{"203.0.113.20:1234", "203.0.113.10", "POST", 204},
+		{"[2001:db8::20]:1234", "setup.example.com", "GET", 204},
 		{"192.168.1.20:1234", "192.168.1.10", "POST", 204},
 	} {
 		request := httptest.NewRequest(test.method, "http://"+test.host+"/setup", nil)
@@ -173,8 +175,8 @@ func TestTemporaryEntryKeepsHandoffAvailableOutsideConfiguredLAN(t *testing.T) {
 	request.RemoteAddr = "192.168.1.20:42000"
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("management route outside configured LAN = %d", response.Code)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("temporary route did not delegate dynamic access checks: %d", response.Code)
 	}
 }
 

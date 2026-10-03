@@ -146,3 +146,7 @@ func (s *Store) writePassword(ctx context.Context, password, expectedHash string
 		return auditWith(ctx, tx, auditRow{Time: now(), Actor: "admin", Action: "password.change", Object: "admin", Result: "success"})
 	})
 }
+
+func (s *Store) RevokeSessions(ctx context.Context) error {
+	return s.db.WithContext(ctx).Where("1 = 1").Delete(&sessionRow{}).Error
+}

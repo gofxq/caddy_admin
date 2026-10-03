@@ -21,7 +21,7 @@ func (app *configurationApplication) Session(context.Context, string) (domain.Se
 	return domain.Session{Username: "admin", CSRF: "csrf", MustChange: app.mustChange}, nil
 }
 func (*configurationApplication) ExportConfiguration(context.Context) (application.Configuration, error) {
-	return application.Configuration{Format: application.ConfigurationFormat, Version: 1, Services: []application.PortableService{}}, nil
+	return application.Configuration{Format: application.ConfigurationFormat, Version: 2, Services: []application.PortableService{}}, nil
 }
 func (*configurationApplication) PreviewConfiguration(context.Context, application.Configuration) (application.ConfigurationPreview, error) {
 	return application.ConfigurationPreview{Revision: 3, Services: []domain.Service{}, Changes: []domain.Change{}}, nil
@@ -46,9 +46,9 @@ func TestConfigurationRoutesRequireAuthenticationOriginAndCSRF(t *testing.T) {
 		{"POST", "/configuration/import", true, true, true, false, 200},
 	} {
 		t.Run(test.method+test.path+strconv.Itoa(test.want), func(t *testing.T) {
-			request := httptest.NewRequest(test.method, "/api/v1"+test.path, strings.NewReader(`{"configuration":{"format":"caddy-web-admin","version":1,"settings":{},"services":[]},"revision":3,"confirm":true}`))
+			request := httptest.NewRequest(test.method, "/api/v1"+test.path, strings.NewReader(`{"configuration":{"format":"caddy-web-admin","version":2,"settings":{},"services":[]},"revision":3,"confirm":true}`))
 			if test.path == "/configuration/preview" {
-				request = httptest.NewRequest(test.method, "/api/v1"+test.path, strings.NewReader(`{"configuration":{"format":"caddy-web-admin","version":1,"settings":{},"services":[]}}`))
+				request = httptest.NewRequest(test.method, "/api/v1"+test.path, strings.NewReader(`{"configuration":{"format":"caddy-web-admin","version":2,"settings":{},"services":[]}}`))
 			}
 			request.Header.Set("Content-Type", "application/json")
 			if test.auth {
@@ -74,7 +74,7 @@ func TestConfigurationRoutesRequireAuthenticationOriginAndCSRF(t *testing.T) {
 
 func TestConfigurationUploadRejectsSecretsAndServerOwnedFields(t *testing.T) {
 	for _, extra := range []string{`"token":"secret",`, `"password":"secret",`, `"snapshot":{},`} {
-		body := `{"configuration":{"format":"caddy-web-admin","version":1,` + extra + `"settings":{},"services":[]}}`
+		body := `{"configuration":{"format":"caddy-web-admin","version":2,` + extra + `"settings":{},"services":[]}}`
 		request := httptest.NewRequest("POST", "/api/v1/configuration/preview", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Origin", "https://console.example.test")

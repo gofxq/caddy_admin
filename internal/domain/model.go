@@ -12,7 +12,7 @@ import (
 type Service struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Group     string `json:"group"`
+	DomainID  string `json:"domain_id"`
 	Hostname  string `json:"hostname"`
 	Scheme    string `json:"scheme"`
 	Host      string `json:"host"`
@@ -24,8 +24,9 @@ type Service struct {
 }
 
 type Draft struct {
-	Revision int64     `json:"revision"`
-	Services []Service `json:"services"`
+	Settings ManagedSettings `json:"settings"`
+	Revision int64           `json:"revision"`
+	Services []Service       `json:"services"`
 }
 
 type Change struct {

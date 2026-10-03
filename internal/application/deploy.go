@@ -27,7 +27,7 @@ func (service *Service) publicCertificateReady(ctx context.Context) bool {
 	if !service.runtimeMatchesSnapshot(ctx) || service.certificates == nil {
 		return false
 	}
-	return service.certificates.PublicReady(ctx, service.certificateQuery(status.Mode))
+	return service.certificates.PublicReady(ctx, service.consoleCertificateQuery(status.Mode))
 }
 
 func (service *Service) requirePublicCertificate(ctx context.Context) error {
@@ -72,7 +72,7 @@ func (service *Service) Preview(ctx context.Context, rollback string) (domain.Pr
 	if err != nil {
 		return domain.Preview{}, err
 	}
-	preview := domain.Preview{Revision: draft.Revision, Services: draft.Services, RollbackID: rollback}
+	preview := domain.Preview{Revision: draft.Revision, Services: draft.Services, Settings: draft.Settings, ActiveSettings: service.activeSettings(), RollbackID: rollback}
 	if rollback != "" {
 		history, historyErr := service.repository.Deployment(ctx, rollback)
 		if historyErr != nil {
@@ -82,8 +82,9 @@ func (service *Service) Preview(ctx context.Context, rollback string) (domain.Pr
 			return preview, domain.Invalid("仅可回滚成功版本")
 		}
 		preview.Services, preview.RollbackConfig, preview.RollbackHash = history.Services, history.Config, history.Hash
+		preview.Settings = service.activeSettings()
 	}
-	policy, err := service.targetPolicy(ctx)
+	policy, err := service.targetPolicyForSettings(ctx, preview.Settings)
 	if err != nil {
 		return preview, err
 	}
@@ -93,10 +94,11 @@ func (service *Service) Preview(ctx context.Context, rollback string) (domain.Pr
 			return preview, err
 		}
 	}
-	preview.Config, err = domain.Generate(service.caddyConfig(), preview.Services)
+	preview.Config, err = domain.Generate(service.caddyConfigFor(preview.Settings), preview.Services)
 	if err != nil {
 		return preview, err
 	}
+	preview.SettingsChanged = !sameSettings(preview.Settings, preview.ActiveSettings)
 	preview.Hash = domain.Fingerprint(preview.Config)
 	var before []domain.Service
 	preview.ExpectedHash, before, err = service.expected(ctx)
@@ -120,11 +122,12 @@ func (service *Service) Preview(ctx context.Context, rollback string) (domain.Pr
 	return preview, nil
 }
 
-func (service *Service) policyHash() string {
+func (service *Service) policyHash() string { return service.policyHashFor(service.activeSettings()) }
+func (service *Service) policyHashFor(settings domain.ManagedSettings) string {
 	raw, _ := json.Marshal(struct {
 		Config domain.CaddyConfig     `json:"config"`
 		Policy domain.ManagedSettings `json:"policy"`
-	}{service.caddyConfig(), service.options.RuntimePolicy})
+	}{service.caddyConfigFor(settings), settings})
 	return domain.Fingerprint(raw)
 }
 
@@ -149,6 +152,9 @@ func (service *Service) validate(ctx context.Context, revision int64, rollback, 
 		err = domain.Conflict("草稿版本已变化，请刷新预览")
 	}
 	if err == nil {
+		err = service.requireServiceCertificates(ctx, preview.Settings, preview.Services)
+	}
+	if err == nil {
 		err = service.caddy.Validate(ctx, preview.Config)
 	}
 	if err != nil {
@@ -161,7 +167,7 @@ func (service *Service) validate(ctx context.Context, revision int64, rollback, 
 	if err != nil {
 		return preview, err
 	}
-	err = service.repository.SaveValidation(ctx, ValidationRecord{ID: preview.ValidationID, Revision: preview.Revision, Config: preview.Config, Services: string(services), BaseHash: preview.RuntimeHash, PolicyHash: service.policyHash(), RollbackID: rollback, Created: created}, actor)
+	err = service.repository.SaveValidation(ctx, ValidationRecord{ID: preview.ValidationID, Revision: preview.Revision, Config: preview.Config, Services: string(services), BaseHash: preview.RuntimeHash, PolicyHash: service.policyHashFor(preview.Settings), Settings: preview.Settings, RollbackID: rollback, Created: created}, actor)
 	return preview, err
 }
 
@@ -196,14 +202,22 @@ func (service *Service) Begin(ctx context.Context, request domain.PublishRequest
 	if err != nil {
 		return domain.Deployment{}, domain.Conflict("校验已失效，请重新校验")
 	}
-	if validation.Revision != request.Revision || validation.PolicyHash != service.policyHash() || validation.Created <= time.Now().Add(-15*time.Minute).Unix() {
+	draft, err := service.repository.Draft(ctx)
+	if err != nil {
+		return domain.Deployment{}, err
+	}
+	policySettings := draft.Settings
+	if validation.RollbackID != "" {
+		policySettings = service.activeSettings()
+	}
+	if validation.Revision != request.Revision || draft.Revision != request.Revision || validation.PolicyHash != service.policyHashFor(policySettings) || validation.Created <= time.Now().Add(-15*time.Minute).Unix() {
 		return domain.Deployment{}, domain.Conflict("校验或部署策略已变化，请重新校验")
 	}
 	var list []domain.Service
 	if err = json.Unmarshal([]byte(validation.Services), &list); err != nil {
 		return domain.Deployment{}, err
 	}
-	policy, err := service.targetPolicy(ctx)
+	policy, err := service.targetPolicyForSettings(ctx, validation.Settings)
 	if err != nil {
 		return domain.Deployment{}, err
 	}
@@ -215,6 +229,9 @@ func (service *Service) Begin(ctx context.Context, request domain.PublishRequest
 		if normalized.Dial != item.Dial {
 			return domain.Deployment{}, domain.Conflict("上游解析已变化，请重新校验")
 		}
+	}
+	if err := service.requireServiceCertificates(ctx, validation.Settings, list); err != nil {
+		return domain.Deployment{}, err
 	}
 	runtimeConfig, err := service.caddy.Read(ctx)
 	if err != nil {
@@ -231,7 +248,14 @@ func (service *Service) Begin(ctx context.Context, request domain.PublishRequest
 	if runtimeHash != expectedHash && !request.ConfirmDrift {
 		return domain.Deployment{}, domain.Conflict("存在外部配置漂移，需要明确确认覆盖")
 	}
-	deployment := domain.Deployment{ID: domain.ID(), Revision: validation.Revision, Status: "applying", Config: validation.Config, Services: list, BaseHash: validation.BaseHash, Hash: domain.Fingerprint(validation.Config), Actor: actor, Created: timestamp(), RollbackID: validation.RollbackID, Changes: domain.Diff(before, list), Idempotency: request.Idempotency, RequestHash: requestHash}
+	active := service.activeSettings()
+	if validation.Settings.ConsoleLANOnly && !sameSettings(active, validation.Settings) && !consoleSourceAllowed(validation.Settings, request.ClientAddress) {
+		return domain.Deployment{}, domain.Invalid("新规则会阻止当前设备访问控制台，请从目标网络登录后再发布")
+	}
+	if widensAccess(active, validation.Settings, before, list) && !request.ConfirmExposure {
+		return domain.Deployment{}, domain.Invalid("请明确确认放开访问范围")
+	}
+	deployment := domain.Deployment{ID: domain.ID(), Revision: validation.Revision, Status: "applying", Config: validation.Config, Services: list, Settings: validation.Settings, BaseHash: validation.BaseHash, Hash: domain.Fingerprint(validation.Config), Actor: actor, Created: timestamp(), RollbackID: validation.RollbackID, Changes: domain.Diff(before, list), Idempotency: request.Idempotency, RequestHash: requestHash}
 	deployment, err = service.repository.BeginDeployment(ctx, validation.Revision, deployment)
 	if err == nil {
 		service.owned[deployment.ID] = struct{}{}
@@ -292,7 +316,13 @@ func (service *Service) reconcile(ctx context.Context, deployment domain.Deploym
 			service.recordFinish(ctx, deployment, "uncertain", "已应用但启动快照未持久化，需恢复后核对")
 			return err
 		}
-		return service.repository.FinishDeployment(ctx, deployment, "success", "")
+		service.policyMu.Lock()
+		defer service.policyMu.Unlock()
+		if err = service.repository.FinishDeployment(ctx, deployment, "success", ""); err != nil {
+			return err
+		}
+		service.setActivePolicy(deployment.Settings)
+		return nil
 	}
 	if hash == deployment.BaseHash {
 		return service.repository.FinishDeployment(ctx, deployment, "failed", "运行配置仍为原版本，发布未完成")

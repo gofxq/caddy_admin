@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -80,8 +79,7 @@ func (api *setupAPI) status(c *gin.Context) {
 		abortError(c, err)
 		return
 	}
-	clientIP, _, _ := net.SplitHostPort(c.Request.RemoteAddr)
-	respondJSON(c, http.StatusOK, gin.H{"initialized": status.Initialized, "test_tls": status.TestTLS, "resolver_suggestions": status.Resolvers, "external_caddy": status.ExternalCaddy, "client_ip": clientIP})
+	respondJSON(c, http.StatusOK, status)
 }
 
 func (api *setupAPI) preflight(c *gin.Context) {
@@ -90,12 +88,14 @@ func (api *setupAPI) preflight(c *gin.Context) {
 		return
 	}
 	request, ok := bindJSON[struct {
-		Settings application.SetupSettings     `json:"settings"`
-		Services []application.PortableService `json:"services,omitempty"`
+		Settings       application.SetupSettings     `json:"settings"`
+		ImportSettings *domain.ManagedSettings       `json:"import_settings,omitempty"`
+		Services       []application.PortableService `json:"services,omitempty"`
 	}](c)
 	if !ok {
 		return
 	}
+	request.Settings.ImportSettings = request.ImportSettings
 	if len(request.Services) > 0 {
 		respondJSON(c, http.StatusOK, api.application.PreflightSetupImport(c.Request.Context(), request.Settings, request.Services))
 		return
@@ -128,15 +128,7 @@ func setupOriginMatches(actual, requestHost string) bool {
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || !strings.EqualFold(parsed.Host, requestHost) {
 		return false
 	}
-	if strings.EqualFold(parsed.Hostname(), "localhost") {
-		return true
-	}
-	address, err := netip.ParseAddr(parsed.Hostname())
-	if err != nil {
-		return false
-	}
-	address = address.Unmap()
-	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
+	return true
 }
 
 func (api *setupAPI) dnsPreview(c *gin.Context) {
@@ -145,14 +137,39 @@ func (api *setupAPI) dnsPreview(c *gin.Context) {
 		return
 	}
 	request, ok := bindJSON[struct {
-		Token   string `json:"token"`
-		Domain  string `json:"homelab_domain"`
-		Address string `json:"address"`
+		Token              string `json:"token"`
+		Domain             string `json:"domain"`
+		UseConfiguredToken bool   `json:"use_configured_token,omitempty"`
+		SetupID            string `json:"setup_id,omitempty"`
+		Address            string `json:"address"`
 	}](c)
 	if !ok {
 		return
 	}
-	plan, err := api.application.PreviewSetupDNS(c.Request.Context(), request.Token, request.Domain, request.Address)
+	token := request.Token
+	if resolver, ok := api.application.(interface {
+		ResolveSetupToken(string, bool, string) (string, error)
+	}); ok {
+		var err error
+		token, err = resolver.ResolveSetupToken(request.Token, request.UseConfiguredToken, request.SetupID)
+		if err != nil {
+			abortError(c, err)
+			return
+		}
+	} else if request.UseConfiguredToken {
+		provider, ok := api.application.(interface{ ConfiguredSetupToken(string) (string, error) })
+		if !ok {
+			abortError(c, domain.Invalid("预配置凭据不可用"))
+			return
+		}
+		var err error
+		token, err = provider.ConfiguredSetupToken(request.SetupID)
+		if err != nil {
+			abortError(c, err)
+			return
+		}
+	}
+	plan, err := api.application.PreviewSetupDNS(c.Request.Context(), token, request.Domain, request.Address)
 	if err != nil {
 		abortError(c, err)
 		return
@@ -166,11 +183,18 @@ func (api *setupAPI) dnsConfirm(c *gin.Context) {
 		return
 	}
 	request, ok := bindJSON[struct {
-		Settings   application.SetupSettings   `json:"settings"`
-		Cloudflare application.SetupCloudflare `json:"cloudflare"`
+		Settings           application.SetupSettings   `json:"settings"`
+		Cloudflare         application.SetupCloudflare `json:"cloudflare"`
+		ImportSettings     *domain.ManagedSettings     `json:"import_settings,omitempty"`
+		UseConfiguredToken bool                        `json:"use_configured_token,omitempty"`
+		SetupID            string                      `json:"setup_id,omitempty"`
 	}](c)
 	if !ok {
 		return
+	}
+	request.Settings.ImportSettings = request.ImportSettings
+	if request.UseConfiguredToken {
+		request.Cloudflare.UseConfiguredToken, request.Cloudflare.SetupID = true, request.SetupID
 	}
 	plan, err := api.application.ConfirmSetupDNS(c.Request.Context(), request.Settings, request.Cloudflare)
 	if err != nil {

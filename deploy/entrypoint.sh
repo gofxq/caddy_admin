@@ -8,7 +8,9 @@ if [ "$(id -u)" = 0 ] && { [ "$1" = caddy ] || [ "$1" = manager ]; }; then
   chmod 770 /run/caddy
 fi
 cloudflare_token_path="${CLOUDFLARE_API_TOKEN_FILE:-${DATA_DIR:-/var/lib/manager}/secrets/cloudflare_token}"
-if [ -f "$cloudflare_token_path" ]; then
+# Manager keeps the original deployment credential for Setup confirmation.
+# Direct Caddy commands use the persisted runtime credential after initialization.
+if [ "$1" = caddy ] && [ -f "$cloudflare_token_path" ]; then
   CLOUDFLARE_API_TOKEN=$(cat "$cloudflare_token_path")
   export CLOUDFLARE_API_TOKEN
 fi

@@ -15,9 +15,9 @@ func TestDomainJSONContractMatchesAPI(t *testing.T) {
 		value any
 		want  map[string]any
 	}{
-		{"service", domain.Service{ID: "service-1", Name: "Photos", Enabled: true, Port: 2283}, map[string]any{"id": "service-1", "name": "Photos", "group": "", "hostname": "", "scheme": "", "host": "", "port": float64(2283), "enabled": true, "notes": "", "dial": "", "updated_at": ""}},
+		{"service", domain.Service{ID: "service-1", Name: "Photos", Enabled: true, Port: 2283}, map[string]any{"id": "service-1", "name": "Photos", "domain_id": "", "hostname": "", "scheme": "", "host": "", "port": float64(2283), "enabled": true, "notes": "", "dial": "", "updated_at": ""}},
 		{"session hides token", domain.Session{Username: "admin", CSRF: "csrf", Token: "secret", Expires: 7}, map[string]any{"username": "admin", "csrf": "csrf", "must_change": false, "expires": float64(7)}},
-		{"deployment hides config and idempotency", domain.Deployment{ID: "deploy-1", Config: json.RawMessage(`{"secret":true}`), Idempotency: "key", RequestHash: "hash", Services: []domain.Service{}, Changes: []domain.Change{}}, map[string]any{"id": "deploy-1", "version": float64(0), "revision": float64(0), "status": "", "services": []any{}, "base_hash": "", "hash": "", "actor": "", "created": "", "finished": "", "error": "", "rollback_id": "", "changes": []any{}}},
+		{"deployment hides config and idempotency", domain.Deployment{ID: "deploy-1", Config: json.RawMessage(`{"secret":true}`), Idempotency: "key", RequestHash: "hash", Services: []domain.Service{}, Changes: []domain.Change{}}, map[string]any{"id": "deploy-1", "version": float64(0), "revision": float64(0), "status": "", "services": []any{}, "base_hash": "", "hash": "", "actor": "", "created": "", "finished": "", "error": "", "rollback_id": "", "changes": []any{}, "settings": map[string]any{"origin": "", "admin_domain": "", "domains": nil, "console_lan_only": false, "lan_cidrs": nil, "upstream_cidrs": nil, "allowed_names": nil, "denied_ips": nil, "resolvers": nil}}},
 		{"certificate status hides fingerprints", domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, BeforeHash: "before", CandidateHash: "candidate"}, map[string]any{"mode": "cloudflare", "activation_status": "", "public_status": "", "last_error_class": "", "updated_at": ""}},
 	}
 	for _, test := range tests {

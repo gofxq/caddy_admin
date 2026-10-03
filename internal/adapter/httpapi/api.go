@@ -15,6 +15,8 @@ import (
 )
 
 type Application interface {
+	ServiceDetail(context.Context, string) (domain.ServiceDetail, error)
+	CheckUpstream(context.Context, string, string, string) (domain.UpstreamCheck, error)
 	ExportConfiguration(context.Context) (application.Configuration, error)
 	PreviewConfiguration(context.Context, application.Configuration) (application.ConfigurationPreview, error)
 	ImportConfiguration(context.Context, application.Configuration, int64, bool, string) (domain.Draft, error)
@@ -61,6 +63,7 @@ type API struct {
 	certTime     time.Time
 	restart      func()
 	rescueEntry  atomic.Bool
+	consoleSeen  func()
 }
 
 func New(application Application, options Options) *API {
@@ -69,6 +72,13 @@ func New(application Application, options Options) *API {
 
 func (api *API) Handler() http.Handler {
 	router := newEngine()
+	router.Use(func(c *gin.Context) {
+		if err := api.controlAccess(c.Request); err != nil {
+			abortError(c, err)
+			return
+		}
+		c.Next()
+	})
 	router.POST("/api/v1/auth/login", api.login)
 	authenticated := router.Group("/api/v1", api.authenticate())
 	authenticated.GET("/auth/session", func(c *gin.Context) { respondJSON(c, http.StatusOK, sessionFromContext(c)) })
@@ -77,6 +87,8 @@ func (api *API) Handler() http.Handler {
 	management := authenticated.Group("", api.requireChangedPassword())
 	management.GET("/overview", api.overview)
 	management.GET("/services", api.services)
+	management.GET("/services/:id", api.serviceDetail)
+	management.POST("/services/:id/check-upstream", api.checkUpstream)
 	management.POST("/services", api.saveService)
 	management.PUT("/services/:id", api.saveService)
 	management.DELETE("/services/:id", api.saveService)
@@ -91,16 +103,54 @@ func (api *API) Handler() http.Handler {
 	management.POST("/configuration/preview", api.previewConfiguration)
 	management.POST("/configuration/import", api.importConfiguration)
 	management.GET("/settings", api.settings)
+	management.PUT("/settings", api.saveSettings)
+	management.POST("/settings/console/complete", api.completeConsoleTransition)
+	management.POST("/settings/dns/preview", api.previewDomainDNS)
+	management.POST("/settings/dns/confirm", api.confirmDomainDNS)
 	management.POST("/settings/cloudflare", api.activateCloudflare)
 	management.GET("/certificates", api.certificateList)
 	return router
 }
 
 func (api *API) SetRestart(callback func())         { api.restart = callback }
+func (api *API) SetConsoleSeen(callback func())     { api.consoleSeen = callback }
 func (api *API) SetRescueEntryEnabled(enabled bool) { api.rescueEntry.Store(enabled) }
 func (api *API) originAllowed(request *http.Request) bool {
 	origin := strings.TrimRight(request.Header.Get("Origin"), "/")
+	if provider, ok := api.application.(interface {
+		RuntimeSettings(context.Context) (domain.ManagedSettings, error)
+	}); ok {
+		settings, err := provider.RuntimeSettings(request.Context())
+		if err != nil {
+			return false
+		}
+		return origin == settings.Origin || (settings.PreviousOrigin != "" && origin == settings.PreviousOrigin) || (api.rescueEntry.Load() && setupOriginMatches(origin, request.Host))
+	}
 	return origin == strings.TrimRight(api.options.Origin, "/") || (api.rescueEntry.Load() && setupOriginMatches(origin, request.Host))
+}
+
+func (api *API) controlAccess(request *http.Request) error {
+	if provider, ok := api.application.(interface {
+		ControlAccess(context.Context, string) error
+	}); ok {
+		address := api.application.ClientAddress(request.Context(), request.RemoteAddr, request.Header.Get(domain.ClientAddressHeader))
+		return provider.ControlAccess(request.Context(), address)
+	}
+	return nil
+}
+
+func (api *API) ControlHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := api.controlAccess(r); err != nil {
+			var status = http.StatusServiceUnavailable
+			if appErr, ok := err.(*domain.AppError); ok {
+				status = appErr.Status
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (api *API) authenticate() gin.HandlerFunc {
@@ -122,6 +172,16 @@ func (api *API) authenticate() gin.HandlerFunc {
 			}
 		}
 		c.Set(sessionKey, session)
+		if api.consoleSeen != nil && c.Request.Method == http.MethodGet {
+			if provider, ok := api.application.(interface {
+				RuntimeSettings(context.Context) (domain.ManagedSettings, error)
+			}); ok {
+				settings, err := provider.RuntimeSettings(c.Request.Context())
+				if err == nil && settings.Origin == "https://"+c.Request.Host {
+					api.consoleSeen()
+				}
+			}
+		}
 		c.Next()
 	}
 }

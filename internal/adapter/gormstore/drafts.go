@@ -13,6 +13,9 @@ func (s *Store) Draft(ctx context.Context) (Draft, error) {
 		return Draft{}, err
 	}
 	draft := Draft{Revision: row.Revision}
+	if err = json.Unmarshal([]byte(row.Settings), &draft.Settings); err != nil {
+		return draft, err
+	}
 	return draft, json.Unmarshal([]byte(row.Services), &draft.Services)
 }
 
@@ -28,6 +31,9 @@ func (s *Store) SaveService(ctx context.Context, revision int64, service Service
 			return conflict("草稿已被修改，请刷新")
 		}
 		if err = json.Unmarshal([]byte(row.Services), &result.Services); err != nil {
+			return err
+		}
+		if err = json.Unmarshal([]byte(row.Settings), &result.Settings); err != nil {
 			return err
 		}
 		found := false
@@ -68,7 +74,7 @@ func (s *Store) SaveService(ctx context.Context, revision int64, service Service
 		if update.RowsAffected != 1 {
 			return conflict("草稿已被修改，请刷新")
 		}
-		if err = tx.Create(&draftRevisionRow{Revision: result.Revision, Services: encoded}).Error; err != nil {
+		if err = tx.Create(&draftRevisionRow{Revision: result.Revision, Services: encoded, Settings: row.Settings}).Error; err != nil {
 			return err
 		}
 		return auditWith(ctx, tx, auditRow{Time: now(), Actor: actor, Action: action, Object: service.ID, Result: "success", Revision: result.Revision})
@@ -83,6 +89,9 @@ func (s *Store) DraftRevision(ctx context.Context, revision int64) (Draft, error
 		return draft, &AppError{Status: 404, Code: "not_found", Message: "草稿历史版本不存在"}
 	}
 	if err == nil {
+		if err = json.Unmarshal([]byte(row.Settings), &draft.Settings); err != nil {
+			return draft, err
+		}
 		err = json.Unmarshal([]byte(row.Services), &draft.Services)
 	}
 	return draft, err
@@ -105,7 +114,14 @@ func replaceDraftWith(ctx context.Context, tx *gorm.DB, revision int64, services
 	if services == nil {
 		services = []Service{}
 	}
+	row, err := gorm.G[draftRow](tx).Where("id = ?", 1).Take(ctx)
+	if err != nil {
+		return Draft{}, err
+	}
 	result := Draft{Revision: revision + 1, Services: services}
+	if err = json.Unmarshal([]byte(row.Settings), &result.Settings); err != nil {
+		return Draft{}, err
+	}
 	encoded := marshal(services)
 	update := tx.Model(&draftRow{}).Where("id = ? AND revision = ?", 1, revision).Updates(map[string]any{"revision": result.Revision, "services": encoded})
 	if update.Error != nil {
@@ -114,7 +130,7 @@ func replaceDraftWith(ctx context.Context, tx *gorm.DB, revision int64, services
 	if update.RowsAffected != 1 {
 		return Draft{}, conflict("草稿已被修改，请重新预览导入")
 	}
-	if err := tx.Create(&draftRevisionRow{Revision: result.Revision, Services: encoded}).Error; err != nil {
+	if err := tx.Create(&draftRevisionRow{Revision: result.Revision, Services: encoded, Settings: row.Settings}).Error; err != nil {
 		return Draft{}, err
 	}
 	if err := auditWith(ctx, tx, auditRow{Time: now(), Actor: actor, Action: "configuration.import", Object: "draft", Result: "success", Revision: result.Revision}); err != nil {

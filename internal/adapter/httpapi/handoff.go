@@ -69,17 +69,7 @@ func PrivateSetupHost(hostport string) bool {
 	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
 }
 
-func (api *handoffAPI) sourcePermitted(address netip.Addr) bool {
-	if address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() {
-		return true
-	}
-	for _, prefix := range api.lan {
-		if prefix.Contains(address) {
-			return true
-		}
-	}
-	return false
-}
+func (api *handoffAPI) sourcePermitted(address netip.Addr) bool { return address.IsValid() }
 
 func (api *handoffAPI) allowed(remote string) (bool, bool) {
 	address, ok := remoteAddress(remote)
@@ -106,9 +96,15 @@ func (api *handoffAPI) allowed(remote string) (bool, bool) {
 
 func (api *handoffAPI) handoff(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	if !PrivateSetupHost(c.Request.Host) {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "forbidden", "message": "临时交接入口仅接受私有地址 Host"}})
-		return
+	if provider, ok := api.application.(interface {
+		ControlAccess(context.Context, string) error
+		ClientAddress(context.Context, string, string) string
+	}); ok {
+		address := provider.ClientAddress(c.Request.Context(), c.Request.RemoteAddr, c.GetHeader("X-Caddy-Client-IP"))
+		if err := provider.ControlAccess(c.Request.Context(), address); err != nil {
+			abortError(c, err)
+			return
+		}
 	}
 	allowed, permitted := api.allowed(c.Request.RemoteAddr)
 	if !allowed {
@@ -116,12 +112,9 @@ func (api *handoffAPI) handoff(c *gin.Context) {
 		if permitted {
 			status = http.StatusTooManyRequests
 		}
-		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": "forbidden", "message": "临时交接入口仅供可信网络访问"}})
+		c.AbortWithStatusJSON(status, gin.H{"error": gin.H{"code": "forbidden", "message": "请求过多或来源格式无效，请稍后重试"}})
 		return
 	}
 	status := api.application.SetupHandoff(c.Request.Context())
 	respondJSON(c, http.StatusOK, status)
-	if status.ConsoleStatus == "ready" && api.ready != nil {
-		api.ready()
-	}
 }

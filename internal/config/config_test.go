@@ -10,8 +10,7 @@ import (
 
 func TestConfigMapsEveryManagedField(t *testing.T) {
 	settings := domain.ManagedSettings{
-		Origin: "https://caddyadmin.home.example", PublicDomain: "public.example",
-		HomelabDomain: "home.example", AdminDomain: "caddyadmin.home.example",
+		Origin: "https://caddyadmin.home.example", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example", Access: domain.DomainAccess("trusted")}}, AdminDomain: "caddyadmin.home.example",
 		LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"},
 		AllowedNames: []string{"photos.internal"}, DeniedIPs: []string{"10.0.0.1"}, Resolvers: []string{"1.1.1.1"},
 	}
@@ -23,7 +22,7 @@ func TestConfigMapsEveryManagedField(t *testing.T) {
 		t.Fatalf("managed settings mapping lost fields:\n got %#v\nwant %#v", got, settings)
 	}
 	generated := value.CaddyConfig()
-	if generated.AdminDomain != settings.AdminDomain || generated.HomelabDomain != settings.HomelabDomain || generated.PublicDomain != settings.PublicDomain || !reflect.DeepEqual(generated.LAN, settings.LAN) || !reflect.DeepEqual(generated.Resolvers, settings.Resolvers) {
+	if generated.AdminDomain != settings.AdminDomain || !reflect.DeepEqual(generated.Domains, settings.Domains) || !reflect.DeepEqual(generated.LAN, settings.LAN) || !reflect.DeepEqual(generated.Resolvers, settings.Resolvers) {
 		t.Fatalf("Caddy mapping lost managed settings: %#v", generated)
 	}
 }
@@ -39,7 +38,7 @@ func TestLoadUsesOnlyCurrentDeploymentEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("removed business environment still affects startup: %v", err)
 	}
-	if value.Origin != "" || value.AdminDomain != "" || value.PublicDomain != "" || value.HomelabDomain != "" || len(value.LAN) != 0 || len(value.UpstreamCIDRs) != 0 || len(value.AllowedNames) != 0 || len(value.DeniedIPs) != 0 || len(value.Resolvers) != 0 {
+	if value.Origin != "" || value.AdminDomain != "" || len(value.Domains) != 0 || len(value.LAN) != 0 || len(value.UpstreamCIDRs) != 0 || len(value.AllowedNames) != 0 || len(value.DeniedIPs) != 0 || len(value.Resolvers) != 0 {
 		t.Fatalf("removed environment supplied managed settings: %#v", value.ManagedSettings())
 	}
 	defaults := config.Default()

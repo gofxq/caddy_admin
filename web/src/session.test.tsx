@@ -16,7 +16,7 @@ it('keeps console input on a background 503, then exits on unauthorized',async()
   if(input.endsWith('/late-mutation'))return new Promise<Response>(resolve=>{finishMutation=resolve})
   if(input.endsWith('/auth/login')){sessionStatus=200;return new Response(JSON.stringify({username:'admin',csrf:'new-session',must_change:false}))}
   if(input.endsWith('/auth/logout'))return new Response(logoutStatus===204?'':JSON.stringify({error:{code:'unavailable',message:'登出暂不可用'}}),{status:logoutStatus})
-  const data=input.endsWith('/auth/session')?(sessionStatus===200?{username:'admin',csrf:'test',must_change:false}:{error:{code:sessionStatus===401?'unauthorized':'unavailable',message:'暂不可用'}}):input.endsWith('/services')?{revision:0,services:[],published:[]}:{config:{}}
+  const data=input.endsWith('/auth/session')?(sessionStatus===200?{username:'admin',csrf:'test',must_change:false}:{error:{code:sessionStatus===401?'unauthorized':'unavailable',message:'暂不可用'}}):input.endsWith('/services')?{revision:0,services:[],published:[]}:{config:{domains:[],upstream_cidrs:[],allowed_names:[]}}
   return new Response(JSON.stringify(data),{status:input.endsWith('/auth/session')?sessionStatus:200})
  }))
  document.body.innerHTML='<div id="root"></div>'

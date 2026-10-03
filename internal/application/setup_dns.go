@@ -29,10 +29,12 @@ type SetupDNS interface {
 }
 
 type SetupCloudflare struct {
-	Token       string `json:"token"`
-	Address     string `json:"address"`
-	Fingerprint string `json:"fingerprint"`
-	Confirmed   bool   `json:"confirmed"`
+	UseConfiguredToken bool   `json:"use_configured_token,omitempty"`
+	SetupID            string `json:"setup_id,omitempty"`
+	Token              string `json:"token"`
+	Address            string `json:"address"`
+	Fingerprint        string `json:"fingerprint"`
+	Confirmed          bool   `json:"confirmed"`
 }
 
 type SetupIntent struct {
@@ -76,7 +78,11 @@ func (service *Service) ConfirmSetupDNS(ctx context.Context, settings SetupSetti
 	if !cf.Confirmed || cf.Fingerprint == "" {
 		return SetupDNSPlan{}, domain.Invalid("请明确确认 DNS 变更")
 	}
-	plan, err := service.PreviewSetupDNS(ctx, cf.Token, managed.HomelabDomain, cf.Address)
+	cf.Token, err = service.configuredToken(cf.Token, cf.UseConfiguredToken, cf.SetupID)
+	if err != nil {
+		return SetupDNSPlan{}, err
+	}
+	plan, err := service.PreviewSetupDNS(ctx, cf.Token, strings.TrimPrefix(managed.AdminDomain, "caddyadmin."), cf.Address)
 	if err != nil {
 		return plan, err
 	}
@@ -159,5 +165,5 @@ func (service *Service) CheckSetupDNS(ctx context.Context, settings SetupSetting
 	}
 	probeContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return service.setupProbe.DNSResults(probeContext, managed.HomelabDomain, address, managed.Resolvers)
+	return service.setupProbe.DNSResults(probeContext, strings.TrimPrefix(managed.AdminDomain, "caddyadmin."), address, managed.Resolvers)
 }

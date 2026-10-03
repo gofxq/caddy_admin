@@ -6,6 +6,7 @@ import (
 )
 
 type Deployment struct {
+	Settings    ManagedSettings `json:"settings"`
 	ID          string          `json:"id"`
 	Version     int64           `json:"version"`
 	Revision    int64           `json:"revision"`
@@ -25,6 +26,9 @@ type Deployment struct {
 }
 
 type Preview struct {
+	Settings            ManagedSettings `json:"settings"`
+	ActiveSettings      ManagedSettings `json:"active_settings"`
+	SettingsChanged     bool            `json:"settings_changed"`
 	ValidationExpiresAt time.Time       `json:"validation_expires_at"`
 	RollbackConfig      json.RawMessage `json:"rollback_config,omitempty"`
 	RollbackHash        string          `json:"rollback_hash,omitempty"`
@@ -41,11 +45,13 @@ type Preview struct {
 }
 
 type PublishRequest struct {
-	ValidationID string `json:"validation_id"`
-	Revision     int64  `json:"revision"`
-	ExpectedHash string `json:"expected_hash"`
-	Idempotency  string `json:"idempotency_key"`
-	ConfirmDrift bool   `json:"confirm_drift"`
+	ConfirmExposure bool   `json:"confirm_exposure"`
+	ClientAddress   string `json:"-"`
+	ValidationID    string `json:"validation_id"`
+	Revision        int64  `json:"revision"`
+	ExpectedHash    string `json:"expected_hash"`
+	Idempotency     string `json:"idempotency_key"`
+	ConfirmDrift    bool   `json:"confirm_drift"`
 }
 
 type AuditEvent struct {

@@ -32,7 +32,7 @@ func freePort(t *testing.T) string {
 func integrationConfig(t *testing.T, dir string) domain.CaddyConfig {
 	t.Helper()
 	return domain.CaddyConfig{
-		Socket: filepath.Join(dir, "admin.sock"), HomelabDomain: "home.example.test",
+		Socket: filepath.Join(dir, "admin.sock"), Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}},
 		AdminDomain: "caddyadmin.home.example.test", LAN: []string{"127.0.0.1/32"},
 		ManagerDial: "127.0.0.1:1", StaticRoot: dir, CaddyStorage: filepath.Join(dir, "storage"),
 		CertificateMode: domain.CertificateModeBootstrapInternal, TestTLS: true,

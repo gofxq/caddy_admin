@@ -10,6 +10,18 @@ import (
 
 type SecretFile struct{ Path string }
 
+func (secret *SecretFile) ReadCloudflareToken() (string, error) {
+	raw, err := os.ReadFile(secret.Path)
+	if err != nil {
+		return "", domain.Invalid("Cloudflare Token 尚未配置，请先在设置中保存")
+	}
+	token := strings.TrimSpace(string(raw))
+	if err = domain.ValidateCloudflareToken(token); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
 var _ application.SecretStore = (*SecretFile)(nil)
 
 func (secret *SecretFile) WriteCloudflareToken(token string) error {
