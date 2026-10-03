@@ -9,9 +9,65 @@ import (
 	"github.com/gofxq/caddy_admin/internal/domain"
 )
 
+func registeredDomains(settings domain.ManagedSettings) []string {
+	values := make([]string, 0, len(settings.Domains))
+	for _, item := range settings.Domains {
+		values = append(values, item.Name)
+	}
+	return values
+}
+
+func (service *Service) consoleCertificateQuery(mode domain.CertificateMode) CertificateQuery {
+	query := service.certificateQuery(mode)
+	query.Domains = nil
+	settings := service.activeSettings()
+	for _, d := range settings.Domains {
+		if domain.OneLevel(settings.AdminDomain, d.Name) {
+			query.Domains = append(query.Domains, d.Name)
+			break
+		}
+	}
+	return query
+}
+
+func (service *Service) requireServiceCertificates(ctx context.Context, settings domain.ManagedSettings, list []domain.Service) error {
+	if service.externalCaddy() {
+		return nil
+	}
+	active := service.activeSettings()
+	checked := map[string]bool{}
+	for _, item := range list {
+		if !item.Enabled || checked[item.DomainID] {
+			continue
+		}
+		checked[item.DomainID] = true
+		name := ""
+		for _, d := range settings.Domains {
+			if d.ID == item.DomainID {
+				name = d.Name
+			}
+		}
+		registered := false
+		for _, d := range active.Domains {
+			if d.ID == item.DomainID && d.Name == name {
+				registered = true
+			}
+		}
+		if !registered {
+			return domain.Conflict("请先单独发布域名配置，待证书就绪后再发布其业务服务")
+		}
+		query := service.certificateQuery(domain.CertificateModeCloudflare)
+		query.Domains = []string{name}
+		if service.certificates == nil || !service.certificates.PublicReady(ctx, query) {
+			return domain.Conflict("域名证书尚未验证可信，请等待签发后重新校验")
+		}
+	}
+	return nil
+}
+
 func (service *Service) certificateQuery(mode domain.CertificateMode) CertificateQuery {
-	settings := service.options.RuntimePolicy
-	return CertificateQuery{Domains: []string{settings.PublicDomain, settings.HomelabDomain}, ProbeAddress: service.options.ProbeAddress, Mode: mode, TestTLS: service.options.TestTLS}
+	settings := service.activeSettings()
+	return CertificateQuery{Domains: registeredDomains(settings), ProbeAddress: service.options.ProbeAddress, Mode: mode, TestTLS: service.options.TestTLS}
 }
 
 func (service *Service) Certificates(ctx context.Context) []domain.Certificate {
@@ -36,7 +92,7 @@ func (service *Service) CertificateState(ctx context.Context) (domain.Certificat
 	runtimeMatches := service.runtimeMatchesSnapshot(ctx)
 	if !runtimeMatches {
 		publicStatus = "pending"
-	} else if service.certificates != nil && service.certificates.PublicReady(ctx, service.certificateQuery(status.Mode)) {
+	} else if service.certificates != nil && service.certificates.PublicReady(ctx, service.consoleCertificateQuery(status.Mode)) {
 		publicStatus = "ready"
 	} else {
 		for _, certificate := range service.Certificates(ctx) {
@@ -110,6 +166,11 @@ func (service *Service) finalizeTemporaryAdminCertificate(ctx context.Context) e
 func (service *Service) ActivateCloudflare(ctx context.Context, token, actor string) (domain.CertificateStatus, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
+	if _, err := service.repository.Pending(ctx); err == nil {
+		return domain.CertificateStatus{}, domain.Conflict("已有发布待完成或核对，请稍后更新 Token")
+	} else if !domain.IsMissing(err) {
+		return domain.CertificateStatus{}, err
+	}
 	if service.externalCaddy() || service.options.TestTLS {
 		return domain.CertificateStatus{}, domain.Invalid("当前部署模式不支持在本机启用 Cloudflare")
 	}
@@ -119,13 +180,26 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 	if service.secrets == nil || service.snapshot == nil || service.bootstrapTLS == nil {
 		return domain.CertificateStatus{}, fmt.Errorf("certificate storage is not configured")
 	}
+	current, err := service.repository.CertificateStatus(ctx)
+	if err != nil {
+		return domain.CertificateStatus{}, err
+	}
+	if current.Mode == domain.CertificateModeCloudflare && current.ActivationStatus == "success" {
+		if err = service.secrets.WriteCloudflareToken(token); err != nil {
+			return current, err
+		}
+		if err = service.repository.Audit(ctx, actor, "certificate.token", "cloudflare", "saved", 0, 0); err != nil {
+			return current, err
+		}
+		return current, nil
+	}
 	_, published, err := service.expected(ctx)
 	if err != nil {
 		return domain.CertificateStatus{}, err
 	}
 	config := service.caddyConfig()
 	config.CertificateMode, config.TemporaryAdminCertificate = domain.CertificateModeCloudflare, true
-	if err = service.bootstrapTLS.Ensure(config.TemporaryAdminCertPath, config.TemporaryAdminKeyPath, service.options.RuntimePolicy.Origin); err != nil {
+	if err = service.bootstrapTLS.Ensure(config.TemporaryAdminCertPath, config.TemporaryAdminKeyPath, service.activeSettings().Origin); err != nil {
 		return domain.CertificateStatus{}, err
 	}
 	candidate, err := domain.Generate(config, published)

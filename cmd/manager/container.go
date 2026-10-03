@@ -89,6 +89,9 @@ func runContainer(c config.Config) error {
 		}
 	}
 	if initialized && needsCloudflareToken(c, certificateMode) {
+		if err := loadCloudflareSecret(); err != nil {
+			return err
+		}
 		if err := domain.ValidateCloudflareToken(os.Getenv("CLOUDFLARE_API_TOKEN")); err != nil {
 			return err
 		}

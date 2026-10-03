@@ -7,6 +7,7 @@ type schemaVersionRow struct {
 func (schemaVersionRow) TableName() string { return "schema_version" }
 
 type draftRow struct {
+	Settings string `gorm:"column:settings;type:TEXT;not null"`
 	ID       int    `gorm:"column:id;primaryKey;autoIncrement:false;check:chk_draft_singleton,id = 1"`
 	Revision int64  `gorm:"column:revision;not null"`
 	Services string `gorm:"column:services;type:TEXT;not null"`
@@ -15,6 +16,7 @@ type draftRow struct {
 func (draftRow) TableName() string { return "draft" }
 
 type draftRevisionRow struct {
+	Settings string `gorm:"column:settings;type:TEXT;not null"`
 	Revision int64  `gorm:"column:revision;primaryKey;autoIncrement:false"`
 	Services string `gorm:"column:services;type:TEXT;not null"`
 }
@@ -39,6 +41,7 @@ type sessionRow struct {
 func (sessionRow) TableName() string { return "sessions" }
 
 type validationRow struct {
+	Settings   string `gorm:"column:settings;type:TEXT;not null"`
 	ID         string `gorm:"column:id;type:TEXT;primaryKey"`
 	Revision   int64  `gorm:"column:revision;not null"`
 	Config     []byte `gorm:"column:config;type:BLOB;not null"`
@@ -52,6 +55,7 @@ type validationRow struct {
 func (validationRow) TableName() string { return "validations" }
 
 type deploymentRow struct {
+	Settings    string `gorm:"column:settings;type:TEXT;not null"`
 	ID          string `gorm:"column:id;type:TEXT;primaryKey"`
 	Version     int64  `gorm:"column:version;not null;uniqueIndex"`
 	Revision    int64  `gorm:"column:revision;not null"`

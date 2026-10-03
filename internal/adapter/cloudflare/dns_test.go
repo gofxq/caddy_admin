@@ -130,7 +130,7 @@ func TestDNSPreviewRejectsConflictingRecordsAndUnsafeAddresses(t *testing.T) {
 		{records: []record{{Type: "CNAME", Name: "*.h.example.com", Content: "elsewhere.example.com"}}, address: "192.168.1.6"},
 		{records: []record{{Type: "A"}, {Type: "A"}}, address: "192.168.1.6"},
 		{admin: []record{{Type: "A", Content: "192.168.1.9"}}, address: "192.168.1.6"},
-		{address: "127.0.0.1"}, {address: "0.0.0.0"}, {address: "169.254.1.2"}, {address: "203.0.113.6"},
+		{address: "127.0.0.1"}, {address: "0.0.0.0"}, {address: "169.254.1.2"},
 	} {
 		writes := 0
 		d := fixture(t, &tc.records, &tc.admin, &writes, false)
@@ -220,5 +220,25 @@ func TestDNSPreviewRejectsRecordsOutsideTheExactName(t *testing.T) {
 	}
 	if writes != 0 {
 		t.Fatal("preview wrote DNS")
+	}
+}
+
+func TestDNSPreviewSupportsPublicDeploymentAddresses(t *testing.T) {
+	for _, address := range []string{"203.0.113.6", "2001:db8::6"} {
+		t.Run(address, func(t *testing.T) {
+			records, admin := []record{}, []record{}
+			writes := 0
+			d := fixture(t, &records, &admin, &writes, false)
+			plan, err := d.Preview(context.Background(), testToken, "h.example.com", address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Address != address || plan.Action != "create" || writes != 0 {
+				t.Fatalf("unexpected public preview: %#v, writes=%d", plan, writes)
+			}
+			if err := d.Apply(context.Background(), testToken, plan); err != nil || writes != 1 {
+				t.Fatalf("public DNS update: writes=%d err=%v", writes, err)
+			}
+		})
 	}
 }

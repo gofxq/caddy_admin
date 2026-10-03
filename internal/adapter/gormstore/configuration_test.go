@@ -17,7 +17,7 @@ func TestConfigurationExportContainsOnlyPortableBusinessData(t *testing.T) {
 	if err := store.CompleteSetup(ctx, application.SetupCredentials{Username: "admin", Password: "private-admin-password"}, settings, domain.CertificateStatus{Mode: domain.CertificateModeBootstrapInternal, ActivationStatus: "idle", PublicStatus: "unknown"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := store.SaveService(ctx, 0, domain.Service{ID: "internal-id", Name: "Photos", Group: "homelab", Hostname: "photos.home.example", Scheme: "http", Host: "10.0.0.8", Port: 8080, Enabled: true, Dial: "10.0.0.8:8080", UpdatedAt: "internal-time"}, false, "admin")
+	_, err := store.SaveService(ctx, 0, domain.Service{ID: "internal-id", Name: "Photos", DomainID: "home", Hostname: "photos.home.example", Scheme: "http", Host: "10.0.0.8", Port: 8080, Enabled: true, Dial: "10.0.0.8:8080", UpdatedAt: "internal-time"}, false, "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestConfigurationExportContainsOnlyPortableBusinessData(t *testing.T) {
 			t.Fatalf("export exposed %s", forbidden)
 		}
 	}
-	if config.Version != 1 || config.Format != "caddy-web-admin" || len(config.Services) != 1 || config.Settings.HomelabDomain != "home.example" {
+	if config.Version != 2 || config.Format != "caddy-web-admin" || len(config.Services) != 1 || config.Settings.Domains[0].Name != "home.example" {
 		t.Fatalf("export = %#v", config)
 	}
 }

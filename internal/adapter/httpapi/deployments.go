@@ -13,6 +13,7 @@ func (api *API) publish(c *gin.Context) {
 	if !ok {
 		return
 	}
+	request.ClientAddress = api.application.ClientAddress(c.Request.Context(), c.Request.RemoteAddr, c.GetHeader(domain.ClientAddressHeader))
 	deployment, err := api.application.Begin(c.Request.Context(), request, sessionFromContext(c).Username)
 	if err != nil {
 		abortError(c, err)

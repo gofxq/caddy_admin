@@ -6,7 +6,7 @@ services: # 外部模式：docker compose -f compose.yaml -f compose.external.ya
       # CADDY_PROBE_ADDRESS: ${CADDY_PROBE_ADDRESS:-} # 可选：TLS 探测目标 host:port；默认 Admin API 主机名加 443，地址不同时取消注释并设置。
       # LISTEN: ${LISTEN:-:8080} # 可选：容器内 Manager 监听，默认 :8080；改端口须同步 Manager 映射与 MANAGER_DIAL。
     ports: !override # 替换内置模式 80/443 映射，不能同时保留。
-      - '${SETUP_BIND:-0.0.0.0:8082}:8082' # HTTPS 初始化/交接入口；默认固定宿主端口 8082，只允许可信 LAN/VPN。
+      - '${SETUP_BIND:-0.0.0.0:8082}:8082' # HTTPS 初始化/交接入口；默认固定宿主端口 8082，应用不默认限制来源；宿主防火墙决定可达范围。
       - '${MANAGER_BIND:-127.0.0.1:8081}:8080' # Manager 默认仅宿主回环可达；远端 Caddy 按需绑定可信接口并限制来源。
     # extra_hosts: # 可选：外部 Caddy 在宿主机上且使用 host.docker.internal 时，取消下行及此行注释。
     #   - 'host.docker.internal:host-gateway' # 为容器增加宿主网关地址，不自动发现宿主 LAN IP。

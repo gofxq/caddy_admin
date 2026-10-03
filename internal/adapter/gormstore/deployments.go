@@ -15,6 +15,9 @@ func deploymentFromRow(row deploymentRow) (Deployment, error) {
 		Created: row.Created, Finished: row.Finished, Error: row.Error,
 		RollbackID: row.RollbackID, Idempotency: row.Idempotency, RequestHash: row.RequestHash,
 	}
+	if err := json.Unmarshal([]byte(row.Settings), &d.Settings); err != nil {
+		return d, err
+	}
 	if err := json.Unmarshal([]byte(row.Services), &d.Services); err != nil {
 		return d, err
 	}
@@ -27,7 +30,7 @@ func deploymentFromRow(row deploymentRow) (Deployment, error) {
 func deploymentToRow(d Deployment) deploymentRow {
 	return deploymentRow{
 		ID: d.ID, Version: d.Version, Revision: d.Revision, Status: d.Status,
-		Config: d.Config, Services: marshal(d.Services), BaseHash: d.BaseHash, Hash: d.Hash,
+		Settings: marshal(d.Settings), Config: d.Config, Services: marshal(d.Services), BaseHash: d.BaseHash, Hash: d.Hash,
 		Actor: d.Actor, Created: d.Created, Finished: d.Finished, Error: d.Error,
 		RollbackID: d.RollbackID, Changes: marshal(d.Changes), Idempotency: d.Idempotency,
 		RequestHash: d.RequestHash,
@@ -119,12 +122,36 @@ func (s *Store) BeginDeployment(ctx context.Context, expectedRevision int64, d D
 
 func (s *Store) finish(ctx context.Context, d Deployment, status, message string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		stored, err := gorm.G[deploymentRow](tx).Select("status", "error").Where("id = ?", d.ID).Take(ctx)
+		stored, err := gorm.G[deploymentRow](tx).Where("id = ?", d.ID).Take(ctx)
 		if err != nil {
 			return err
 		}
 		if stored.Status == status && stored.Error == message {
 			return nil
+		}
+		if status == "success" {
+			var committed ManagedSettings
+			if err = json.Unmarshal([]byte(stored.Settings), &committed); err != nil {
+				return err
+			}
+			old, oldErr := gorm.G[managedSettingsRow](tx).Where("id = ?", 1).Take(ctx)
+			if oldErr != nil && !isMissing(oldErr) {
+				return oldErr
+			}
+			if oldErr == nil {
+				var previous ManagedSettings
+				if err = json.Unmarshal([]byte(old.Value), &previous); err != nil {
+					return err
+				}
+				if previous.PreviousAdminDomain != "" && committed.PreviousAdminDomain == "" {
+					if err = tx.Where("1 = 1").Delete(&sessionRow{}).Error; err != nil {
+						return err
+					}
+				}
+				if err = tx.Model(&managedSettingsRow{}).Where("id = ?", 1).Update("value", stored.Settings).Error; err != nil {
+					return err
+				}
+			}
 		}
 		finished := ""
 		if status == "success" || status == "failed" {

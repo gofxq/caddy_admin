@@ -34,7 +34,7 @@ func (service *Service) endpointIPs(ctx context.Context, endpoint string) ([]net
 }
 
 func (service *Service) targetPolicy(ctx context.Context) (domain.TargetPolicy, error) {
-	return service.targetPolicyForSettings(ctx, service.options.RuntimePolicy)
+	return service.targetPolicyForSettings(ctx, service.activeSettings())
 }
 
 func (service *Service) targetPolicyForSettings(ctx context.Context, settings domain.ManagedSettings) (domain.TargetPolicy, error) {
@@ -65,7 +65,7 @@ func (service *Service) targetPolicyForSettings(ctx context.Context, settings do
 			reserved = append(reserved, address.String())
 		}
 	}
-	return domain.TargetPolicy{PublicDomain: settings.PublicDomain, HomelabDomain: settings.HomelabDomain, AdminDomain: settings.AdminDomain, UpstreamCIDRs: settings.UpstreamCIDRs, AllowedNames: settings.AllowedNames, ReservedIPs: reserved, DeniedIPs: settings.DeniedIPs, SystemEndpoints: endpoints, Resolver: service.resolver}, nil
+	return domain.TargetPolicy{Domains: settings.Domains, PreviousAdminDomain: settings.PreviousAdminDomain, AdminDomain: settings.AdminDomain, UpstreamCIDRs: settings.UpstreamCIDRs, AllowedNames: settings.AllowedNames, ReservedIPs: reserved, DeniedIPs: settings.DeniedIPs, SystemEndpoints: endpoints, Resolver: service.resolver}, nil
 }
 
 func (service *Service) ClientAddress(ctx context.Context, remoteAddress, forwardedAddress string) string {

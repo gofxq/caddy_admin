@@ -60,3 +60,33 @@ func setCertificateStatus(ctx context.Context, db *gorm.DB, status CertificateSt
 	row := certificateStateRow{ID: 1, Mode: string(status.Mode), ActivationStatus: status.ActivationStatus, PublicStatus: status.PublicStatus, LastErrorClass: status.LastErrorClass, UpdatedAt: now(), BeforeHash: status.BeforeHash, CandidateHash: status.CandidateHash}
 	return db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, UpdateAll: true}).Create(&row).Error
 }
+
+func (s *Store) SaveSettings(ctx context.Context, revision int64, settings ManagedSettings, actor string) (Draft, error) {
+	var result Draft
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, err := gorm.G[draftRow](tx).Where("id = ?", 1).Take(ctx)
+		if err != nil {
+			return err
+		}
+		if row.Revision != revision {
+			return conflict("草稿已被修改，请刷新")
+		}
+		result = Draft{Revision: revision + 1, Settings: settings}
+		if err = json.Unmarshal([]byte(row.Services), &result.Services); err != nil {
+			return err
+		}
+		encoded := marshal(settings)
+		update := tx.Model(&draftRow{}).Where("id = ? AND revision = ?", 1, revision).Updates(map[string]any{"revision": result.Revision, "settings": encoded})
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return conflict("草稿已被修改，请刷新")
+		}
+		if err = tx.Create(&draftRevisionRow{Revision: result.Revision, Services: row.Services, Settings: encoded}).Error; err != nil {
+			return err
+		}
+		return auditWith(ctx, tx, auditRow{Time: now(), Actor: actor, Action: "settings.update", Object: "draft", Result: "success", Revision: result.Revision})
+	})
+	return result, err
+}

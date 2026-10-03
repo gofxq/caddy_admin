@@ -21,7 +21,8 @@ single-up:
 	docker compose up -d
 reup:
 	docker compose -f compose.yaml -f compose.build.yaml down
-	sudo rm -rf -- ./.run/manager ./.run/snapshots ./.run/caddy-data ./.run/caddy-config
+	sudo rm -rf -- /home/u/dev/github.com/gofxq/caddy_admin/run
+	sudo rm -rf -- /tmp/caddy-admin
 	docker compose -f compose.yaml -f compose.build.yaml up -d --build
 	docker compose -f compose.yaml -f compose.build.yaml ps
 	

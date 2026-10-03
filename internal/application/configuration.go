@@ -10,13 +10,13 @@ import (
 )
 
 const ConfigurationFormat = "caddy-web-admin"
-const ConfigurationVersion = 1
+const ConfigurationVersion = 2
 const MaxConfigurationBytes = 60 << 10
 
 // PortableService contains editable business data, never identifiers or resolved addresses.
 type PortableService struct {
 	Name     string `json:"name"`
-	Group    string `json:"group"`
+	DomainID string `json:"domain_id"`
 	Hostname string `json:"hostname"`
 	Scheme   string `json:"scheme"`
 	Host     string `json:"host"`
@@ -39,18 +39,16 @@ type ConfigurationPreview struct {
 }
 
 func portableService(value domain.Service) PortableService {
-	return PortableService{Name: value.Name, Group: value.Group, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes}
+	return PortableService{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes}
 }
 
 func (service *Service) ExportConfiguration(ctx context.Context) (Configuration, error) {
-	settings, err := service.repository.ManagedSettings(ctx)
-	if err != nil {
-		return Configuration{}, err
-	}
 	draft, err := service.repository.Draft(ctx)
 	if err != nil {
 		return Configuration{}, err
 	}
+	settings := draft.Settings
+	settings.PreviousAdminDomain, settings.PreviousOrigin = "", ""
 	settings.LAN = append([]string{}, settings.LAN...)
 	settings.UpstreamCIDRs = append([]string{}, settings.UpstreamCIDRs...)
 	settings.AllowedNames = append([]string{}, settings.AllowedNames...)
@@ -103,7 +101,7 @@ func (service *Service) normalizeImportedServices(ctx context.Context, settings 
 		ids[value.Hostname] = value.ID
 	}
 	for index, value := range values {
-		candidate, normalizeErr := domain.NormalizeService(ctx, policy, domain.Service{Name: value.Name, Group: value.Group, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes})
+		candidate, normalizeErr := domain.NormalizeService(ctx, policy, domain.Service{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes})
 		if normalizeErr != nil {
 			return nil, domain.Invalid(fmt.Sprintf("导入的第 %d 个服务无效：%s", index+1, normalizeErr.Error()))
 		}
@@ -128,7 +126,22 @@ func (service *Service) PreviewConfiguration(ctx context.Context, value Configur
 	if err != nil {
 		return ConfigurationPreview{}, err
 	}
-	values, err := service.normalizeImportedServices(ctx, service.options.RuntimePolicy, value.Services, draft.Services)
+	portable := append([]PortableService{}, value.Services...)
+	for i := range portable {
+		name := ""
+		for _, d := range value.Settings.Domains {
+			if d.ID == portable[i].DomainID {
+				name = d.Name
+			}
+		}
+		portable[i].DomainID = ""
+		for _, d := range draft.Settings.Domains {
+			if d.Name == name {
+				portable[i].DomainID = d.ID
+			}
+		}
+	}
+	values, err := service.normalizeImportedServices(ctx, draft.Settings, portable, draft.Services)
 	if err != nil {
 		return ConfigurationPreview{}, err
 	}

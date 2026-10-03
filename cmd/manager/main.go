@@ -141,7 +141,10 @@ func run() error {
 		if len(draft.Services) > 0 {
 			return fmt.Errorf("examples require an empty draft")
 		}
-		for _, s := range []domain.Service{{Name: "Router", Group: "homelab", Hostname: "router." + c.HomelabDomain, Scheme: "http", Host: "10.0.0.1", Port: 80, Enabled: true}, {Name: "File browser", Group: "homelab", Hostname: "files." + c.HomelabDomain, Scheme: "http", Host: "10.0.0.8", Port: 5666, Enabled: true}} {
+		if len(c.Domains) == 0 {
+			return fmt.Errorf("no registered domain")
+		}
+		for _, s := range []domain.Service{{Name: "Router", DomainID: c.Domains[0].ID, Hostname: "router." + c.Domains[0].Name, Scheme: "http", Host: "10.0.0.1", Port: 80, Enabled: true}, {Name: "File browser", DomainID: c.Domains[0].ID, Hostname: "files." + c.Domains[0].Name, Scheme: "http", Host: "10.0.0.8", Port: 5666, Enabled: true}} {
 			s.ID = domain.ID()
 			s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			s, e = domain.NormalizeService(ctx, c.TargetPolicy(net.DefaultResolver, nil), s)
@@ -175,7 +178,7 @@ func run() error {
 			_ = syscall.Kill(os.Getppid(), syscall.SIGTERM)
 		})
 	}
-	server := &http.Server{Addr: c.Listen, Handler: httpapi.WebHandler(c.StaticRoot, api.Handler()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Addr: c.Listen, Handler: api.ControlHandler(httpapi.WebHandler(c.StaticRoot, api.Handler())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	var rescueServer *http.Server
 	temporaryEntry := rescueEntryEnabled(c, certificate)
 	if c.AdminURL != "" {
@@ -258,7 +261,7 @@ func composeApplication(c config.Config, store *gormstore.Store) *application.Se
 	options := application.Options{
 		DataDir: c.DataDir, SnapshotDir: c.SnapshotDir, AdminURL: c.AdminURL,
 		ManagerDial: c.ManagerDial, ProbeAddress: c.ProbeAddress, CaddyStorage: c.CaddyStorage,
-		StaticRoot: c.StaticRoot, Socket: c.Socket, CaddyBinary: c.CaddyBinary,
+		StaticRoot: c.StaticRoot, Socket: c.Socket, SetupPassword: os.Getenv("ADMIN_PASSWORD"), SetupToken: os.Getenv("CLOUDFLARE_API_TOKEN"), CaddyBinary: c.CaddyBinary,
 		HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort, TestTLS: c.TestTLS,
 		CertificateMode: c.CertificateMode, RuntimePolicy: c.ManagedSettings(),
 	}
@@ -285,11 +288,12 @@ func startTemporaryEntry(c config.Config, api *httpapi.API, service *application
 	var web http.Handler = httpapi.WebHandler(c.StaticRoot, http.NotFoundHandler())
 	if c.AdminURL == "" {
 		api.SetRescueEntryEnabled(true)
-		web = httpapi.WebHandler(c.StaticRoot, api.Handler())
+		web = api.ControlHandler(httpapi.WebHandler(c.StaticRoot, api.Handler()))
 	}
 	ready := make(chan struct{})
 	var readyOnce sync.Once
-	handler, err := temporaryEntryHandler(c, web, httpapi.NewHandoff(service, httpapi.HandoffOptions{LAN: c.LAN}, func() { readyOnce.Do(func() { close(ready) }) }))
+	api.SetConsoleSeen(func() { readyOnce.Do(func() { close(ready) }) })
+	handler, err := temporaryEntryHandler(c, web, httpapi.NewHandoff(service, httpapi.HandoffOptions{}, nil))
 	if err != nil {
 		return nil, err
 	}
@@ -339,30 +343,10 @@ func closeTemporaryEntryAfterReady(ready <-chan struct{}, grace time.Duration, c
 }
 
 func temporaryEntryHandler(c config.Config, web, handoff http.Handler) (http.Handler, error) {
-	protected, err := lanOnlyHandler(c.LAN, web)
-	if err != nil {
-		return nil, err
-	}
-	if c.AdminURL != "" {
-		lan := protected
-		protected = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if setupPeerAllowed(r.RemoteAddr) {
-				web.ServeHTTP(w, r)
-				return
-			}
-			lan.ServeHTTP(w, r)
-		})
-	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/setup/handoff", handoff)
-	mux.Handle("/", protected)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !httpapi.PrivateSetupHost(r.Host) {
-			http.Error(w, "Temporary entry requires a private IP Host", http.StatusForbidden)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	}), nil
+	mux.Handle("/", web)
+	return mux, nil
 }
 
 // This listener is container-loopback only. Caddy overwrites the client header
@@ -387,25 +371,14 @@ func setupPeerAllowed(remoteAddr string) bool {
 	if err != nil {
 		return false
 	}
-	address, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	address = address.Unmap()
-	return address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast()
+	_, err = netip.ParseAddr(host)
+	return err == nil
 }
-
 func setupAccessHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !setupPeerAllowed(r.RemoteAddr) || !httpapi.PrivateSetupHost(r.Host) {
-			http.Error(w, "Setup is restricted to private networks", http.StatusForbidden)
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == "/" {
+			http.Redirect(w, r, "/setup", http.StatusTemporaryRedirect)
 			return
-		}
-		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			if r.URL.Path == "/" {
-				http.Redirect(w, r, "/setup", http.StatusTemporaryRedirect)
-				return
-			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -470,7 +443,7 @@ func serveSetup(c config.Config, store *gormstore.Store) error {
 		shutdownSetupServers(ctx, append(additional, server)...)
 	}()
 	if c.AdminURL == "" {
-		log.Printf("manager setup on HTTPS :%s and private HTTP :%s", c.HTTPSPort, c.HTTPPort)
+		log.Printf("manager setup on HTTPS :%s and HTTP :%s", c.HTTPSPort, c.HTTPPort)
 	} else {
 		log.Printf("manager setup listening on %s", setupListen)
 	}
@@ -535,9 +508,6 @@ func lanOnlyHandler(cidrs []string, next http.Handler) (http.Handler, error) {
 }
 
 func loadCloudflareSecret() error {
-	if os.Getenv("CLOUDFLARE_API_TOKEN") != "" {
-		return nil
-	}
 	b, err := os.ReadFile(config.CloudflareTokenPath(os.Getenv("DATA_DIR")))
 	if err != nil {
 		return fmt.Errorf("cannot read Cloudflare secret")

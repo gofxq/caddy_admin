@@ -52,7 +52,7 @@ func (probe setupProbe) ExternalConsole(context.Context, string, string) bool {
 }
 
 func validSetupSettings() SetupSettings {
-	return SetupSettings{HomelabDomain: "Home.Example.com.", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"10.0.0.53"}}
+	return SetupSettings{Domain: "Home.Example.com.", Resolvers: []string{"10.0.0.53"}}
 }
 
 func TestPreflightSetupNormalizesSettingsAndClassifiesChecks(t *testing.T) {
@@ -64,7 +64,7 @@ func TestPreflightSetupNormalizesSettingsAndClassifiesChecks(t *testing.T) {
 	if !result.CanComplete || !result.RequiresAcknowledgement {
 		t.Fatalf("preflight flags = complete %v acknowledgement %v", result.CanComplete, result.RequiresAcknowledgement)
 	}
-	want := map[string]string{"settings_valid": "pass", "network_scope": "pass", "resolver_reachable": "pass", "admin_dns": "warning"}
+	want := map[string]string{"settings_valid": "pass", "resolver_reachable": "pass", "admin_dns": "warning"}
 	for _, check := range result.Checks {
 		if status, ok := want[check.ID]; ok {
 			if check.Status != status {
@@ -78,43 +78,18 @@ func TestPreflightSetupNormalizesSettingsAndClassifiesChecks(t *testing.T) {
 	}
 }
 
-func TestNetworkPreflightDoesNotRequireUnenteredDNSButCompletionDoes(t *testing.T) {
-	service := New(Options{}, &setupRepository{}, &setupCaddy{}, Dependencies{})
+func TestPreflightSetupUsesDefaultResolverAndAllowsEmptyPolicies(t *testing.T) {
+	service := New(Options{}, &setupRepository{}, &setupCaddy{}, Dependencies{SetupProbe: setupProbe{resolver: true, dns: true}})
 	input := validSetupSettings()
 	input.Resolvers = nil
 	result := service.PreflightSetup(context.Background(), input)
-	if !result.NetworkValid || result.CanComplete {
-		t.Fatalf("network valid / completion blocked = %#v", result)
+	if !result.CanComplete || len(result.Normalized.Resolvers) != 1 || result.Normalized.Resolvers[0] != "1.1.1.1" {
+		t.Fatalf("default resolver missing: %#v", result)
 	}
-	input.LAN = []string{"invalid"}
+	input.Resolvers = []string{"not-an-ip"}
 	result = service.PreflightSetup(context.Background(), input)
-	if result.NetworkValid || result.NetworkError == "" {
-		t.Fatalf("invalid network was not blocked = %#v", result)
-	}
-}
-
-func TestPreflightSetupBlocksInvalidSettingsAndWarnsForOpenNetworks(t *testing.T) {
-	service := New(Options{}, &setupRepository{}, &setupCaddy{}, Dependencies{SetupProbe: setupProbe{resolver: true, dns: true}})
-	invalid := validSetupSettings()
-	invalid.Resolvers = []string{"not-an-ip"}
-	blocked := service.PreflightSetup(context.Background(), invalid)
-	if blocked.CanComplete || blocked.Checks[0].ID != "settings_valid" || blocked.Checks[0].Status != "block" {
-		t.Fatalf("invalid preflight = %#v", blocked)
-	}
-	open := validSetupSettings()
-	open.LAN = []string{"0.0.0.0/0"}
-	result := service.PreflightSetup(context.Background(), open)
-	if !result.CanComplete || !result.RequiresAcknowledgement {
-		t.Fatalf("open network preflight = %#v", result)
-	}
-	found := false
-	for _, check := range result.Checks {
-		if check.ID == "network_scope" && check.Status == "warning" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("network_scope warning missing")
+	if result.CanComplete {
+		t.Fatal("invalid resolver accepted")
 	}
 }
 
@@ -334,7 +309,7 @@ func TestSetupWarningConsentIsBoundToSettingsAndCurrentWarnings(t *testing.T) {
 			req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), AcknowledgeWarnings: true}
 			req.WarningFingerprint = svc.PreflightSetup(context.Background(), req.Settings).WarningFingerprint
 			if change == "settings" {
-				req.Settings.LAN = []string{"10.1.0.0/16"}
+				req.Settings.Resolvers = []string{"10.1.0.53"}
 			} else {
 				svc.setupProbe = setupProbe{resolver: false, dns: true}
 			}
@@ -463,7 +438,7 @@ func TestCheckSetupDNSValidatesModeSettingsAndInitialization(t *testing.T) {
 			svc := New(tc.options, repo, &setupCaddy{}, Dependencies{SetupProbe: setupProbe{dns: true}})
 			settings := validSetupSettings()
 			if tc.invalidSettings {
-				settings.HomelabDomain = ""
+				settings.Domain = ""
 			}
 			report, err := svc.CheckSetupDNS(context.Background(), settings, tc.address)
 			if tc.wantStatus == 0 {

@@ -22,10 +22,10 @@ func TestContainerCommandsSelectExternalOrEmbeddedCaddy(t *testing.T) {
 		t.Fatal("embedded mode must start Caddy and Manager")
 	}
 	if commands[0].Env != nil {
-		t.Fatal("supervised Caddy must inherit the manager run environment, including the entrypoint-loaded secret")
+		t.Fatal("supervised Caddy must inherit the manager run environment, including the persisted runtime secret")
 	}
 	if !strings.Contains(strings.Join(commands[1].Env, "\n"), "CLOUDFLARE_API_TOKEN=activation-fixture-token") {
-		t.Fatal("supervised Manager did not inherit the entrypoint-loaded Cloudflare secret")
+		t.Fatal("supervised Manager did not inherit the persisted runtime Cloudflare secret")
 	}
 	c.AdminURL = "http://10.77.0.6:2019"
 	commands = containerCommands(c, "/usr/bin/manager", true)
@@ -63,8 +63,7 @@ func TestCertificateActivationRecoveryFollowsBootSnapshot(t *testing.T) {
 			c.DataDir = t.TempDir()
 			c.SnapshotDir = t.TempDir()
 			c.Origin = "https://admin.home.example.com"
-			c.PublicDomain = "example.com"
-			c.HomelabDomain = "home.example.com"
+			c.Domains = []domain.ManagedDomain{{ID: "home", Name: "home.example.com", Access: domain.DomainAccess("trusted")}}
 			c.AdminDomain = "admin.home.example.com"
 			c.LAN = []string{"10.0.0.0/8"}
 			c.UpstreamCIDRs = []string{"10.0.0.0/8"}
@@ -111,8 +110,7 @@ func TestCertificateActivationRecoveryFollowsBootSnapshot(t *testing.T) {
 func TestEmbeddedStartupRejectsExternalSnapshot(t *testing.T) {
 	c := config.Default()
 	c.Origin = "https://admin.home.example.com"
-	c.PublicDomain = "example.com"
-	c.HomelabDomain = "home.example.com"
+	c.Domains = []domain.ManagedDomain{{ID: "home", Name: "home.example.com", Access: domain.DomainAccess("trusted")}}
 	c.AdminDomain = "admin.home.example.com"
 	c.LAN = []string{"10.0.0.0/8"}
 	c.UpstreamCIDRs = []string{"10.0.0.0/8"}
@@ -146,7 +144,7 @@ func TestEmbeddedStartupRejectsExternalSnapshot(t *testing.T) {
 
 func TestEmbeddedStartupNeverRecreatesMissingSnapshot(t *testing.T) {
 	c := config.Default()
-	c.HomelabDomain = "home.example.test"
+	c.Domains = []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}}
 	c.AdminDomain = "caddyadmin.home.example.test"
 	c.Origin = "https://" + c.AdminDomain
 	c.LAN = []string{"10.0.0.0/8"}
@@ -177,8 +175,8 @@ func TestCertificateActivationWithoutFingerprintsRemainsUncertain(t *testing.T) 
 	c := config.Default()
 	c.DataDir = t.TempDir()
 	c.SnapshotDir = t.TempDir()
-	c.HomelabDomain = "home.example.test"
-	c.AdminDomain = "caddyadmin." + c.HomelabDomain
+	c.Domains = []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}}
+	c.AdminDomain = "caddyadmin.home.example.test"
 	c.Origin = "https://" + c.AdminDomain
 	c.LAN = []string{"10.0.0.0/8"}
 	c.Resolvers = []string{"10.0.0.53"}

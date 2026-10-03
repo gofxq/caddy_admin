@@ -9,7 +9,11 @@ network = prefix + '-net'
 compose_project = prefix + '-compose'
 work = tempfile.TemporaryDirectory(prefix=prefix)
 root = pathlib.Path(work.name)
-password = 'ContainerSmokeOnly123!'
+password = 'ContainerSmokeOnly$123!'
+configured_token = 'a' * 40
+# Keep this harness isolated even if a user's validation overlay uses fixed ports.
+compose_override = root / 'smoke.compose.yaml'
+compose_override.write_text('services:\n  caddy:\n    environment:\n      ADMIN_PASSWORD: ' + json.dumps(password.replace('$', '$$')) + '\n      CLOUDFLARE_API_TOKEN: ' + json.dumps(configured_token) + '\n    ports: !override\n      - "127.0.0.1::80"\n      - "127.0.0.1::443"\n      - "127.0.0.1::443/udp"\nnetworks:\n  default:\n    name: ' + prefix + '-compose-net\n')
 probe = ''
 
 def run(*args, check=True, timeout=60):
@@ -22,7 +26,7 @@ def docker(*args, **kw): return run('docker', *args, **kw)
 def compose(*args, **kw):
     # A cold source build can exceed the ordinary request/command deadline.
     kw.setdefault('timeout',900 if '--build' in args or 'build' in args else 60)
-    return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.build.yaml','-f','compose.validation.yaml',*args,**kw)
+    return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.build.yaml','-f','compose.validation.yaml','-f',str(compose_override),*args,**kw)
 def curl(*args, **kw): return run('docker','exec',probe,'curl',*args,**kw)
 
 def eventually(fn, timeout=45):
@@ -80,23 +84,38 @@ def setup(container,values,services=None):
             response=curl('--noproxy','*','-sk','--connect-timeout','2','--max-time','8','https://'+address+':8082/',check=False)
             assert response.returncode==7,'internal mode retained an independent Setup listener'
     assert_no_redundant_setup_listener()
-    status,_=request('/api/v1/setup/status')
+    status,status_payload=request('/api/v1/setup/status')
     if status!=200:
         logs=docker('logs',container,check=False)
-        raise AssertionError('anonymous setup status failed: HTTP %s %s\\n%s\\n%s' % (status,_,logs.stdout,logs.stderr))
+        raise AssertionError('anonymous setup status failed: HTTP %s %s\\n%s\\n%s' % (status,status_payload,logs.stdout,logs.stderr))
+    setup_status=json.loads(status_payload)
+    assert setup_status.get('setup_id'),'Setup session identifier missing'
+    assert password not in status_payload,'Setup status leaked password'
+    if values.get('CLOUDFLARE_API_TOKEN'):
+        assert setup_status['cloudflare_token_status']=='ready','configured test token was not available'
+        assert values['CLOUDFLARE_API_TOKEN'] not in status_payload,'Setup status leaked token'
     hostname='caddyadmin.home.example.test'
     body={'username':'admin','password':password,
-          'settings':{'homelab_domain':'home.example.test',
-          'lan_cidrs':['127.0.0.0/8','10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'],'upstream_cidrs':['172.16.0.0/12'],
-          'allowed_names':[],'denied_ips':[],'resolvers':['9.9.9.9']}}
+          'settings':{'domain':'home.example.test','resolvers':['9.9.9.9']}}
+    if values.get('ADMIN_PASSWORD'):
+        assert setup_status['admin_password_status']=='ready','configured password was not available'
+        del body['password']
+        body.update({'use_configured_password':True,'setup_id':setup_status['setup_id']})
+    else:
+        assert setup_status['admin_password_status']=='missing','manual branch unexpectedly had a configured password'
+    if services is not None:
+        body['import_settings']={'origin':'https://'+hostname,'admin_domain':hostname,
+          'domains':[{'id':'primary','name':'home.example.test','access':'internet'}],
+          'console_lan_only':False,'lan_cidrs':[],'upstream_cidrs':['172.16.0.0/12'],
+          'allowed_names':[],'denied_ips':[],'resolvers':['9.9.9.9']}
     if services is not None:body['services']=services
-    preflight_status,preflight_payload=request('/api/v1/setup/preflight',{'settings':body['settings'],**({'services':services} if services is not None else {})})
+    preflight_status,preflight_payload=request('/api/v1/setup/preflight',{'settings':body['settings'],**({'services':services,'import_settings':body['import_settings']} if services is not None else {})})
     assert preflight_status==200 and 'requires_acknowledgement' in preflight_payload,(preflight_status,preflight_payload)
     unacknowledged,_=request('/api/v1/setup/complete',body)
     assert unacknowledged==409,'setup warnings were accepted without explicit acknowledgement'
     body['acknowledge_warnings']=True
-    body['warning_fingerprint']=preflight_payload['warning_fingerprint']
-    if services:
+    body['warning_fingerprint']=json.loads(preflight_payload)['warning_fingerprint']
+    if services is not None:
         unconfirmed,_=request('/api/v1/setup/complete',body)
         assert unconfirmed==422,'imported setup accepted without explicit confirmation'
         body['confirm_import']=True
@@ -161,8 +180,8 @@ def exercise(request,bootstrap=False):
     csrf=json.loads(body)['csrf']
     status,body=request('/api/v1/configuration/export');assert status==200,(status,body)
     configuration=json.loads(body)
-    assert configuration['format']=='caddy-web-admin' and configuration['version']==1
-    assert all(set(service)=={'name','group','hostname','scheme','host','port','enabled','notes'} for service in configuration['services'])
+    assert configuration['format']=='caddy-web-admin' and configuration['version']==2
+    assert all(set(service)=={'name','domain_id','hostname','scheme','host','port','enabled','notes'} for service in configuration['services'])
     before=json.loads(request('/api/v1/services')[1])
     runtime=json.loads(request('/api/v1/draft/preview')[1])['runtime_hash']
     empty={**configuration,'services':[]}
@@ -182,7 +201,7 @@ def exercise(request,bootstrap=False):
         return None
     assert status==200,(status,body);preview=json.loads(body)
     status,body=request('/api/v1/deployments',{'validation_id':preview['validation_id'],'revision':preview['revision'],
-        'expected_hash':preview['runtime_hash'],'idempotency_key':uuid.uuid4().hex,'confirm_drift':True},csrf);assert status==202,(status,body)
+        'expected_hash':preview['runtime_hash'],'idempotency_key':uuid.uuid4().hex,'confirm_drift':True,'confirm_exposure':True},csrf);assert status==202,(status,body)
     deployment=json.loads(body)['id']
     eventually(lambda:json.loads(request('/api/v1/deployments/'+deployment)[1])['deployment']['status']=='success')
     return deployment
@@ -191,6 +210,7 @@ try:
     compose('up','-d','--build')
     compose_ids=compose('ps','-q','caddy').stdout.strip()
     mount_targets=json.loads(docker('inspect',compose_ids).stdout)[0]['Mounts']
+    docker('exec',compose_ids,'sh','-c','test "$ADMIN_PASSWORD" = "$1" && test "$CLOUDFLARE_API_TOKEN" = "$2"','fixture',password,configured_token)
     assert {m['Destination'] for m in mount_targets}=={'/var/lib/manager','/srv/snapshots','/data','/config'},mount_targets
     binding=[]
     eventually(lambda:(binding.append(compose('port','caddy','443','--protocol','tcp',check=False).stdout.strip()) or bool(binding[-1])))
@@ -206,8 +226,8 @@ try:
     docker('run','-d','--name',probe,'--network',network,'--entrypoint','sh',image,'-ec','sleep 3600')
     eventually(lambda:docker('exec',probe,'curl','--version',check=False).returncode==0)
     upstream_ip=docker('inspect','-f','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',probe).stdout.strip()
-    imported_services=[{'name':'Imported draft','group':'homelab','hostname':'imported.home.example.test','scheme':'http','host':upstream_ip,'port':8088,'enabled':False,'notes':'Isolated import fixture'}]
-    embedded_values={'TEST_TLS':'true'}
+    imported_services=[{'name':'Imported draft','domain_id':'primary','hostname':'imported.home.example.test','scheme':'http','host':upstream_ip,'port':8088,'enabled':False,'notes':'Isolated import fixture'}]
+    embedded_values={'TEST_TLS':'true','ADMIN_PASSWORD':password,'CLOUDFLARE_API_TOKEN':configured_token}
     embedded_mounts=data('embedded')
     embedded=start('embedded',embedded_mounts,embedded_values)
     _,hostname,processes=setup(embedded,embedded_values,imported_services)
@@ -218,7 +238,7 @@ try:
     eventually(lambda:docker('exec',embedded,'manager','health',check=False).returncode==0)
     assert 'manager serve' in docker('top',embedded,'-eo','pid,args').stdout
     exercise(request,bootstrap=True)
-    print('PASS embedded: 80/443 blank-volume setup, HTTP initialization then HTTPS redirect, first-writer conflict, same-IP handoff, unknown-host isolation, HTTPS login, configuration import/export and restart recovery',flush=True)
+    print('PASS embedded: plaintext environment/password dollar preserved, configured password/token status without disclosure, 80/443 blank-volume setup, HTTP initialization then HTTPS redirect, first-writer conflict, same-IP handoff, unknown-host isolation, HTTPS login, configuration import/export and restart recovery',flush=True)
 
     external_mounts=data('external-manager')
     bootstrap_host='caddyadmin.home.example.test'

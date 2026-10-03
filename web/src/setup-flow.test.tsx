@@ -22,14 +22,7 @@ function installAPI({automatic=false,complete=()=>reply({admin_origin:'https://c
  vi.stubGlobal('fetch',fetch)
  return fetch
 }
-async function reachDNS(){
- fireEvent.change(await screen.findByLabelText('管理员密码'),{target:{value:'a-secure-password'}})
- fireEvent.click(screen.getByRole('button',{name:'下一步'}))
- fireEvent.change(screen.getByLabelText('Homelab 域名'),{target:{value:'h.cmx.ee'}})
- fireEvent.click(screen.getByRole('button',{name:'下一步'}))
- fireEvent.click(screen.getByRole('button',{name:'下一步'}))
- await screen.findByRole('heading',{name:'DNS'})
-}
+async function reachDNS(){fireEvent.change(await screen.findByLabelText('管理员密码'),{target:{value:'a-secure-password'}});fireEvent.click(screen.getByRole('button',{name:'下一步'}));fireEvent.change(screen.getByLabelText('首个通配符域名'),{target:{value:'h.cmx.ee'}});await screen.findByRole('heading',{name:'首个域名与 DNS'})}
 
 it('retries an initial connection failure without claiming setup is restarting',async()=>{
  const fetch=vi.fn().mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(reply({initialized:false,test_tls:true,client_ip:'192.168.2.9'}))
@@ -48,14 +41,14 @@ it('explains invalid domain and rejects an oversized username before continuing'
  expect(screen.getByText(/用户名必须为 1–64 字节/)).toBeInTheDocument()
  fireEvent.change(screen.getByLabelText('管理员用户名'),{target:{value:'admin'}})
  fireEvent.click(screen.getByRole('button',{name:'下一步'}))
- fireEvent.change(screen.getByLabelText('Homelab 域名'),{target:{value:'https://h.cmx.ee'}})
+ fireEvent.change(screen.getByLabelText('首个通配符域名'),{target:{value:'https://h.cmx.ee'}})
  expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
  expect(screen.getByText(/域名不能包含协议、端口或路径/)).toBeInTheDocument()
 })
 
 it('switches DoH without clearing the configured DNS or changing server resolvers',async()=>{
  const fetch=installAPI({automatic:true});render(<Setup pollLogin={false}/>);await reachDNS()
- expect(screen.getByText(/请填写 Cloudflare Token/)).toBeInTheDocument()
+ expect(screen.getByText(/请填写或确认使用 Cloudflare Token/)).toBeInTheDocument()
  fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
  fireEvent.click(screen.getByRole('button',{name:'预览 DNS 变更'}))
  fireEvent.click(await screen.findByRole('checkbox',{name:/确认.*DNS/}))
@@ -88,11 +81,11 @@ it('submits without a duplicate browser preflight and requires fresh consent aft
  expect(screen.getByRole('button',{name:'完成初始化'})).toBeDisabled()
  const requests=fetch.mock.calls.filter(([p])=>p.endsWith('/complete'))
  expect(JSON.parse(requests[0][1].body)).toMatchObject({warning_fingerprint:'old-warning',acknowledge_warnings:true})
- expect(fetch.mock.calls.filter(([p])=>p.endsWith('/preflight'))).toHaveLength(3)
+ expect(fetch.mock.calls.filter(([p])=>p.endsWith('/preflight'))).toHaveLength(2)
  fireEvent.click(screen.getByRole('checkbox',{name:/理解上述警告/}))
  fireEvent.click(screen.getByRole('button',{name:'完成初始化'}))
  expect(await screen.findByRole('heading',{name:'初始化已完成'})).toBeInTheDocument()
- expect(fetch.mock.calls.filter(([p])=>p.endsWith('/preflight'))).toHaveLength(3)
+ expect(fetch.mock.calls.filter(([p])=>p.endsWith('/preflight'))).toHaveLength(2)
 })
 
 it('keeps an initialized handoff on screen for the user to open the formal entry',async()=>{

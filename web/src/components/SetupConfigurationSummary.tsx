@@ -1,15 +1,5 @@
-type Policy={homelab_domain:string;lan_cidrs:string[];upstream_cidrs:string[];allowed_names:string[];denied_ips:string[];resolvers:string[]}
-
-export function SetupConfigurationSummary({settings,adminDomain}:{settings:Policy;adminDomain:string}){
- const rows=[
-  ['控制台',adminDomain||'待填写 Homelab 域名'],
-  ['Homelab 域名',settings.homelab_domain.trim().toLowerCase().replace(/\.+$/,'')||'待填写'],
-  ['Public 域名','尚未配置'],
-  ['可信网络',settings.lan_cidrs.join('，')||'待填写'],
-  ['上游网络',settings.upstream_cidrs.join('，')||'待填写'],
-  ['允许的上游名称',settings.allowed_names.join('，')||'未额外允许'],
-  ['拒绝的目标 IP',settings.denied_ips.join('，')||'无额外规则'],
-  ['DNS 解析器',settings.resolvers.join('，')||'待填写'],
- ]
- return <section className="setup-summary" aria-label="配置摘要"><dl>{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></section>
+import type {ManagedSettings} from '../model'
+export function SetupConfigurationSummary({settings,adminDomain,importSettings}:{settings:{domain:string;resolvers:string[]};adminDomain:string;importSettings?:ManagedSettings}){
+ const rows=[['控制台',adminDomain||'待填写域名'],['首个通配符域名',settings.domain||'待填写'],['控制台来源限制','初始关闭；登录后可选启用'],['业务访问范围',importSettings?'采用导入的访问属性，服务只保存草稿':'待配置；登录后明确选择'],['上游许可',importSettings?[...importSettings.upstream_cidrs,...importSettings.allowed_names].join('，')||'尚未许可任何目标':'尚未许可任何目标；登录后配置'],['DNS 解析器',settings.resolvers.join('，')||'待填写']]
+ return <section className="setup-summary" aria-label="配置摘要"><dl>{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{importSettings&&<><p>额外域名与控制台来源限制仅作为待发布草稿。</p><ul>{importSettings.domains.map(d=><li key={d.id}>{d.name} · {d.access==='trusted'?'仅可信网络':d.access==='internet'?'允许互联网访问':'待配置'}</li>)}</ul><p>导入可信网络：{importSettings.lan_cidrs.join('，')||'无'}；上游服务名：{importSettings.allowed_names.join('，')||'无'}；禁止目标：{importSettings.denied_ips.join('，')||'无'}</p></>}</section>
 }

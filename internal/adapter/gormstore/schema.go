@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 var currentSchemaModels = []any{
 	&schemaVersionRow{},
@@ -35,7 +35,7 @@ func initializeOrValidateSchema(db *gorm.DB) error {
 		}
 	}
 	if nonSystem == 0 {
-		return initializeV6(db)
+		return initializeV7(db)
 	}
 	if !db.Migrator().HasTable(&schemaVersionRow{}) {
 		return fmt.Errorf("database missing schema version")
@@ -47,10 +47,10 @@ func initializeOrValidateSchema(db *gorm.DB) error {
 	if len(versions) != 1 || versions[0].Version != currentSchemaVersion {
 		return fmt.Errorf("unsupported or malformed database schema version")
 	}
-	return validateV6(db)
+	return validateV7(db)
 }
 
-func initializeV6(db *gorm.DB) error {
+func initializeV7(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Migrator().CreateTable(currentSchemaModels...); err != nil {
 			return err
@@ -62,8 +62,8 @@ func initializeV6(db *gorm.DB) error {
 		}
 		seeds := []any{
 			&schemaVersionRow{Version: currentSchemaVersion},
-			&draftRow{ID: 1, Revision: 0, Services: "[]"},
-			&draftRevisionRow{Revision: 0, Services: "[]"},
+			&draftRow{ID: 1, Revision: 0, Services: "[]", Settings: "{}"},
+			&draftRevisionRow{Revision: 0, Services: "[]", Settings: "{}"},
 			&certificateStateRow{ID: 1, Mode: string(CertificateModeBootstrapInternal), ActivationStatus: "idle", PublicStatus: "unknown", UpdatedAt: now()},
 		}
 		for _, seed := range seeds {
@@ -71,11 +71,11 @@ func initializeV6(db *gorm.DB) error {
 				return err
 			}
 		}
-		return validateV6(tx)
+		return validateV7(tx)
 	})
 }
 
-func validateV6(db *gorm.DB) error {
+func validateV7(db *gorm.DB) error {
 	for _, model := range currentSchemaModels {
 		if !db.Migrator().HasTable(model) {
 			return fmt.Errorf("database schema is incomplete")

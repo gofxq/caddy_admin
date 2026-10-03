@@ -1,5 +1,5 @@
 name: caddy-admin # 可选：固定项目名；不设置时使用目录名。
-services: # 内置模式：docker compose up -d，然后打开 http://服务器内网IP/setup。
+services: # 内置模式：docker compose up -d，然后打开 http://服务器IP/setup。
   caddy:
     image: ghcr.io/gofxq/caddy-admin:latest # 必需：拉取预构建镜像，无需源码；固定版本可改为 sha-提交SHA 标签。
     restart: unless-stopped # 异常退出自动重启，手动停止后保持停止。
@@ -9,8 +9,11 @@ services: # 内置模式：docker compose up -d，然后打开 http://服务器�
       test: [CMD, manager, health] # 检查 Manager、SQLite 和 Caddy 就绪状态。
       timeout: 5s
       start_period: 20s
-    ports: # 宿主绑定直接修改下方映射；初始化前用防火墙限制可信 LAN/VPN。
-      - '80:80' # 初始化前提供可信内网 HTTP Setup，完成后跳转 HTTPS；默认绑定宿主所有接口。
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-} # 可选：仅首次初始化使用；Setup 中确认使用，不回显。
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-} # 可选：首次使用确认后自动保存，初始化后运行文件优先。
+    ports: # 宿主绑定直接修改下方映射；宿主防火墙决定实际可达范围。
+      - '80:80' # 初始化前提供HTTP Setup（手动凭据会明文传输），完成后跳转 HTTPS；默认绑定宿主所有接口。
       - '443:443' # HTTPS 初始化、控制台及业务入口；改宿主端口后须显式访问该端口。
       - '443:443/udp' # 可选：HTTP/3；不启用时仍可通过 TCP HTTPS 访问。
     cap_drop: [ALL] # 移除默认 capabilities，再仅授予启动所需权限。

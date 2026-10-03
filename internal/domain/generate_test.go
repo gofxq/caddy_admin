@@ -11,12 +11,12 @@ import (
 
 func TestGeneratedCaddyJSONContract(t *testing.T) {
 	config := domain.CaddyConfig{
-		AdminDomain: "caddyadmin.home.example", HomelabDomain: "home.example",
+		AdminDomain: "caddyadmin.home.example", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example", Access: domain.DomainAccess("trusted")}},
 		LAN: []string{"10.0.0.0/8"}, ManagerDial: "manager:8080", StaticRoot: "/srv/web",
 		Socket: "/run/caddy/admin.sock", CaddyStorage: "/data/caddy", Resolvers: []string{"1.1.1.1"},
 		CertificateMode: domain.CertificateModeCloudflare, HTTPPort: "80", HTTPSPort: "443",
 	}
-	raw, err := domain.Generate(config, []domain.Service{{ID: "one", Name: "Photos", Group: "homelab", Hostname: "photos.home.example", Scheme: "http", Host: "10.77.0.8", Port: 2283, Dial: "10.77.0.8:2283", Enabled: true}})
+	raw, err := domain.Generate(config, []domain.Service{{ID: "one", Name: "Photos", DomainID: "home", Hostname: "photos.home.example", Scheme: "http", Host: "10.77.0.8", Port: 2283, Dial: "10.77.0.8:2283", Enabled: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestGeneratedCaddyJSONContract(t *testing.T) {
 }
 
 func TestSetupIPEntryOnlyExistsInEmbeddedConfigsAndPreservesCertificateLoaders(t *testing.T) {
-	config := domain.CaddyConfig{Socket: "/tmp/admin.sock", AdminDomain: "caddyadmin.home.example", HomelabDomain: "home.example", LAN: []string{"10.0.0.0/8"}, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443", SetupCertPath: "/tmp/setup.crt", SetupKeyPath: "/tmp/setup.key", TemporaryAdminCertPath: "/tmp/admin.crt", TemporaryAdminKeyPath: "/tmp/admin.key", CertificateMode: domain.CertificateModeCloudflare, TemporaryAdminCertificate: true}
+	config := domain.CaddyConfig{Socket: "/tmp/admin.sock", AdminDomain: "caddyadmin.home.example", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example", Access: domain.DomainAccess("trusted")}}, LAN: []string{"10.0.0.0/8"}, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443", SetupCertPath: "/tmp/setup.crt", SetupKeyPath: "/tmp/setup.key", TemporaryAdminCertPath: "/tmp/admin.crt", TemporaryAdminKeyPath: "/tmp/admin.key", CertificateMode: domain.CertificateModeCloudflare, TemporaryAdminCertificate: true}
 	raw, err := domain.Generate(config, nil)
 	if err != nil {
 		t.Fatal(err)

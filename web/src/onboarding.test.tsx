@@ -21,7 +21,7 @@ function renderPage(path:string,component:()=>React.JSX.Element){
 }
 
 const overview={reachable:true,drift:false,runtime_hash:'same',expected_hash:'same',version:0,enabled:0,draft_revision:0,unpublished:false,message:'运行配置与已发布版本一致',recent:[],checked_at:'2026-09-24T00:00:00Z'}
-const settings={config:{origin:location.origin,public_domain:'',homelab_domain:'home.example.com',admin_domain:'caddyadmin.home.example.com',lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'},external_caddy:false}
+const settings={config:{origin:location.origin,domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'},external_caddy:false}
 
 it('guides a new administrator from creating a service to the first publication',async()=>{
  vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:overview)
@@ -46,18 +46,18 @@ it('moves the first-run guide to preview after a draft is saved and hides it aft
 })
 
 it('opens the service editor from the empty state action',async()=>{
- vi.mocked(api).mockImplementation(async path=>path==='/services'?{revision:0,services:[],published:[]}:{config:{public_domain:'example.com',homelab_domain:'home.example.com'}})
+ vi.mocked(api).mockImplementation(async path=>path==='/services'?{revision:0,services:[],published:[]}:{config:{domains:[{id:'home',name:'home.example.com',access:'trusted'}],console_lan_only:false,upstream_cidrs:[],allowed_names:[]}})
  renderPage('/services',Services)
  fireEvent.click(await screen.findByRole('button',{name:'添加第一个服务'}))
  expect(screen.getByRole('heading',{name:'新建服务'})).toBeInTheDocument()
 })
 
-it('disables Public services until a Public domain is configured',async()=>{
- vi.mocked(api).mockImplementation(async path=>path==='/services'?{revision:0,services:[],published:[]}:{config:{public_domain:'',homelab_domain:'home.example.com'}})
+it('allows pending access domains to save drafts without a forced group',async()=>{
+ vi.mocked(api).mockImplementation(async path=>path==='/services'?{revision:0,services:[],published:[]}:{config:{domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,upstream_cidrs:[],allowed_names:[]}})
  renderPage('/services',Services)
  fireEvent.click(await screen.findByRole('button',{name:'添加第一个服务'}))
- expect(screen.getByRole('option',{name:/Public/})).toBeDisabled()
- expect(screen.getByText(/公网域名尚未配置/)).toBeInTheDocument()
+ expect(screen.getByRole('option',{name:/home.example.com · 待配置/})).toBeEnabled()
+ expect(screen.getByText(/待配置访问范围也可保存草稿/)).toBeInTheDocument()
 })
 
 it('links an empty deployment preview back to service editing',async()=>{

@@ -80,6 +80,10 @@ type publishApplication struct {
 func (*publishApplication) Session(context.Context, string) (domain.Session, error) {
 	return domain.Session{Username: "admin", CSRF: "csrf"}, nil
 }
+func (*publishApplication) ClientAddress(context.Context, string, string) string {
+	return "203.0.113.9"
+}
+
 func (*publishApplication) Begin(context.Context, domain.PublishRequest, string) (domain.Deployment, error) {
 	return domain.Deployment{ID: "deployment-1", Revision: 7, Status: "applying"}, nil
 }
@@ -172,18 +176,18 @@ func (fake *setupApplication) CompleteSetup(context.Context, application.SetupRe
 	return "https://caddyadmin.home.example.test", nil
 }
 
-func TestSetupPreflightAndStatusExposeTCPClientOnly(t *testing.T) {
+func TestSetupPreflightAndStatusDoNotBindClientNetwork(t *testing.T) {
 	handler := NewSetup(&setupApplication{}, SetupOptions{}, nil)
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
 	statusRequest.RemoteAddr = "10.20.30.40:4567"
 	statusRequest.Header.Set("X-Forwarded-For", "203.0.113.9")
 	statusResponse := httptest.NewRecorder()
 	handler.ServeHTTP(statusResponse, statusRequest)
-	if statusResponse.Code != http.StatusOK || !strings.Contains(statusResponse.Body.String(), `"client_ip":"10.20.30.40"`) || !strings.Contains(statusResponse.Body.String(), `"resolver_suggestions":["10.0.0.53"]`) {
+	if statusResponse.Code != http.StatusOK || strings.Contains(statusResponse.Body.String(), `"client_ip"`) || !strings.Contains(statusResponse.Body.String(), `"resolver_suggestions":["10.0.0.53"]`) {
 		t.Fatalf("status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
 	}
 
-	preflightRequest := httptest.NewRequest(http.MethodPost, "/api/v1/setup/preflight", strings.NewReader(`{"settings":{"homelab_domain":"home.example.test"}}`))
+	preflightRequest := httptest.NewRequest(http.MethodPost, "/api/v1/setup/preflight", strings.NewReader(`{"settings":{"domain":"home.example.test"}}`))
 	preflightRequest.Host = "10.20.30.1:8082"
 	preflightRequest.RemoteAddr = "10.20.30.40:4567"
 	preflightRequest.Header.Set("Origin", "https://10.20.30.1:8082")
@@ -195,10 +199,10 @@ func TestSetupPreflightAndStatusExposeTCPClientOnly(t *testing.T) {
 	}
 }
 
-func TestSetupRequiresExactPrivateOrigin(t *testing.T) {
+func TestSetupRequiresExactOrigin(t *testing.T) {
 	fake := &setupApplication{}
 	handler := NewSetup(fake, SetupOptions{}, nil)
-	body := `{"username":"admin","password":"a-secure-password","settings":{"homelab_domain":"home.example.test","lan_cidrs":[],"upstream_cidrs":[],"allowed_names":[],"denied_ips":[],"resolvers":[]}}`
+	body := `{"username":"admin","password":"a-secure-password","settings":{"domain":"home.example.test","resolvers":[]}}`
 	for _, test := range []struct {
 		origin string
 		want   int
@@ -298,7 +302,7 @@ func (fake *handoffApplication) SetupHandoff(context.Context) application.SetupH
 	return fake.status
 }
 
-func TestHandoffRestrictsPeerAndHostAndOmitsSensitiveDetails(t *testing.T) {
+func TestHandoffAllowsPublicPeersAndHostsAndOmitsSensitiveDetails(t *testing.T) {
 	fake := &handoffApplication{status: application.SetupHandoff{Initialized: true, Mode: "embedded", AdminOrigin: "https://caddyadmin.home.example.test", ManagerStatus: "ready", DNSStatus: "pending", ConsoleStatus: "pending", TemporaryEntry: true, CheckedAt: "2026-10-01T00:00:00Z"}}
 	handler := NewHandoff(fake, HandoffOptions{}, nil)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/setup/handoff", nil)
@@ -321,7 +325,7 @@ func TestHandoffRestrictsPeerAndHostAndOmitsSensitiveDetails(t *testing.T) {
 		denied.Host, denied.RemoteAddr = test.host, test.remote
 		deniedResponse := httptest.NewRecorder()
 		handler.ServeHTTP(deniedResponse, denied)
-		if deniedResponse.Code != http.StatusForbidden {
+		if deniedResponse.Code != http.StatusOK {
 			t.Fatalf("host=%q remote=%q status=%d", test.host, test.remote, deniedResponse.Code)
 		}
 	}
@@ -339,7 +343,7 @@ func TestHandoffAllowsExplicitConfiguredLANSource(t *testing.T) {
 	}
 }
 
-func TestHandoffSignalsOnlyAfterReadyWasReturned(t *testing.T) {
+func TestHandoffStatusAloneDoesNotConfirmBrowserAccess(t *testing.T) {
 	ready := make(chan struct{}, 1)
 	fake := &handoffApplication{status: application.SetupHandoff{ConsoleStatus: "ready"}}
 	handler := NewHandoff(fake, HandoffOptions{}, func() { ready <- struct{}{} })
@@ -349,8 +353,8 @@ func TestHandoffSignalsOnlyAfterReadyWasReturned(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	select {
 	case <-ready:
+		t.Fatal("unauthenticated status reading confirmed browser access")
 	default:
-		t.Fatal("ready response did not signal lifecycle")
 	}
 }
 
@@ -375,14 +379,14 @@ func TestErrorEnvelopeContract(t *testing.T) {
 
 func (fake *setupApplication) ConfirmSetupDNS(_ context.Context, settings application.SetupSettings, cf application.SetupCloudflare) (application.SetupDNSPlan, error) {
 	fake.calls++
-	return application.SetupDNSPlan{Name: "*." + settings.HomelabDomain, Address: cf.Address, Fingerprint: cf.Fingerprint}, nil
+	return application.SetupDNSPlan{Name: "*." + settings.Domain, Address: cf.Address, Fingerprint: cf.Fingerprint}, nil
 }
 
 func TestSetupDNSConfirmationRequiresExactOriginAndReturnsPlan(t *testing.T) {
 	for _, origin := range []string{"", "https://evil.example", "http://127.0.0.1:8080"} {
 		fake := &setupApplication{}
 		handler := NewSetup(fake, SetupOptions{}, nil)
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/confirm", strings.NewReader(`{"settings":{"homelab_domain":"home.example.test"},"cloudflare":{"token":"test-token","address":"10.0.0.6","fingerprint":"preview","confirmed":true}}`))
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/confirm", strings.NewReader(`{"settings":{"domain":"home.example.test"},"cloudflare":{"token":"test-token","address":"10.0.0.6","fingerprint":"preview","confirmed":true}}`))
 		request.Host = "127.0.0.1:8080"
 		request.Header.Set("Origin", origin)
 		request.Header.Set("Content-Type", "application/json")
@@ -400,14 +404,14 @@ func TestSetupDNSConfirmationRequiresExactOriginAndReturnsPlan(t *testing.T) {
 
 func (fake *setupApplication) CheckSetupDNS(_ context.Context, settings application.SetupSettings, address string) (application.SetupDNSReport, error) {
 	fake.calls++
-	return application.SetupDNSReport{Verified: false, Queries: []application.SetupDNSQuery{{Name: "caddyadmin." + settings.HomelabDomain, Resolver: "1.1.1.1", Addresses: []string{}, Status: "block", Message: "解析尚未生效"}}}, nil
+	return application.SetupDNSReport{Verified: false, Queries: []application.SetupDNSQuery{{Name: "caddyadmin." + settings.Domain, Resolver: "1.1.1.1", Addresses: []string{}, Status: "block", Message: "解析尚未生效"}}}, nil
 }
 
 func TestSetupDNSCheckRequiresExactOriginAndReturnsFailedQueries(t *testing.T) {
 	for _, origin := range []string{"", "https://evil.example", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080"} {
 		fake := &setupApplication{}
 		handler := NewSetup(fake, SetupOptions{}, nil)
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/check", strings.NewReader(`{"settings":{"homelab_domain":"home.example.test"},"address":"10.0.0.6"}`))
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/check", strings.NewReader(`{"settings":{"domain":"home.example.test"},"address":"10.0.0.6"}`))
 		request.Host = "127.0.0.1:8080"
 		request.Header.Set("Origin", origin)
 		request.Header.Set("Content-Type", "application/json")

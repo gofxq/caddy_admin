@@ -95,12 +95,12 @@ func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (app
 		return p, err
 	}
 	ip, err := netip.ParseAddr(strings.TrimSpace(address))
-	if err != nil || !ip.IsPrivate() || ip.IsLoopback() || ip.Is4In6() {
-		return p, domain.Invalid("自动 DNS 配置需要可访问的私网 IPv4 或 IPv6 地址，不含协议或端口")
+	if err != nil || ip.IsLoopback() || ip.Is4In6() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || !ip.IsGlobalUnicast() {
+		return p, domain.Invalid("自动 DNS 配置需要可访问的 IPv4 或 IPv6 地址，不含协议或端口")
 	}
 	hostname = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
 	if !domain.ValidDomain(hostname) || strings.ContainsAny(hostname, "/*: ?#\\") || !strings.Contains(hostname, ".") {
-		return p, domain.Invalid("Homelab 域名无效")
+		return p, domain.Invalid("通配符基础域名无效")
 	}
 	// Exact suffix queries prevent selecting an unrelated zone visible to the token.
 	labels := strings.Split(hostname, ".")

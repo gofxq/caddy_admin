@@ -48,7 +48,7 @@ func (service *Service) SaveService(ctx context.Context, revision int64, value d
 		}
 	}
 	if !remove {
-		policy, policyErr := service.targetPolicy(ctx)
+		policy, policyErr := service.targetPolicyForSettings(ctx, draft.Settings)
 		if policyErr != nil {
 			return domain.Draft{}, policyErr
 		}

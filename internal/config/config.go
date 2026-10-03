@@ -21,8 +21,10 @@ type Config struct {
 	AdminURL                  string                 `json:"-"`
 	Listen                    string                 `json:"-"`
 	Origin                    string                 `json:"origin"`
-	PublicDomain              string                 `json:"public_domain"`
-	HomelabDomain             string                 `json:"homelab_domain"`
+	Domains                   []domain.ManagedDomain `json:"domains"`
+	ConsoleLANOnly            bool                   `json:"console_lan_only"`
+	PreviousAdminDomain       string                 `json:"previous_admin_domain,omitempty"`
+	PreviousOrigin            string                 `json:"previous_origin,omitempty"`
 	AdminDomain               string                 `json:"admin_domain"`
 	LAN                       []string               `json:"lan_cidrs"`
 	UpstreamCIDRs             []string               `json:"upstream_cidrs"`
@@ -57,11 +59,12 @@ func CloudflareTokenPath(dataDir string) string {
 }
 
 func (config Config) ManagedSettings() domain.ManagedSettings {
-	return domain.ManagedSettings{Origin: config.Origin, PublicDomain: config.PublicDomain, HomelabDomain: config.HomelabDomain, AdminDomain: config.AdminDomain, LAN: config.LAN, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, DeniedIPs: config.DeniedIPs, Resolvers: config.Resolvers}
+	return domain.ManagedSettings{Origin: config.Origin, Domains: config.Domains, ConsoleLANOnly: config.ConsoleLANOnly, PreviousAdminDomain: config.PreviousAdminDomain, PreviousOrigin: config.PreviousOrigin, AdminDomain: config.AdminDomain, LAN: config.LAN, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, DeniedIPs: config.DeniedIPs, Resolvers: config.Resolvers}
 }
 
 func ApplyManagedSettings(config *Config, settings domain.ManagedSettings) error {
-	config.Origin, config.PublicDomain, config.HomelabDomain, config.AdminDomain = settings.Origin, settings.PublicDomain, settings.HomelabDomain, settings.AdminDomain
+	config.Origin, config.Domains, config.AdminDomain = settings.Origin, settings.Domains, settings.AdminDomain
+	config.ConsoleLANOnly, config.PreviousAdminDomain, config.PreviousOrigin = settings.ConsoleLANOnly, settings.PreviousAdminDomain, settings.PreviousOrigin
 	config.LAN, config.UpstreamCIDRs, config.AllowedNames, config.DeniedIPs, config.Resolvers = settings.LAN, settings.UpstreamCIDRs, settings.AllowedNames, settings.DeniedIPs, settings.Resolvers
 	return domain.ValidateManagedSettings(settings)
 }
@@ -110,11 +113,11 @@ func (config Config) SystemEndpoints() []string {
 }
 
 func (config Config) TargetPolicy(resolver domain.TargetResolver, reserved []string) domain.TargetPolicy {
-	return domain.TargetPolicy{PublicDomain: config.PublicDomain, HomelabDomain: config.HomelabDomain, AdminDomain: config.AdminDomain, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, ReservedIPs: append(append([]string{}, config.ReservedIPs...), reserved...), DeniedIPs: config.DeniedIPs, SystemEndpoints: config.SystemEndpoints(), Resolver: resolver}
+	return domain.TargetPolicy{Domains: config.Domains, PreviousAdminDomain: config.PreviousAdminDomain, AdminDomain: config.AdminDomain, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, ReservedIPs: append(append([]string{}, config.ReservedIPs...), reserved...), DeniedIPs: config.DeniedIPs, SystemEndpoints: config.SystemEndpoints(), Resolver: resolver}
 }
 
 func (config Config) CaddyConfig() domain.CaddyConfig {
-	return domain.CaddyConfig{Socket: config.Socket, AdminURL: config.AdminURL, PublicDomain: config.PublicDomain, HomelabDomain: config.HomelabDomain, AdminDomain: config.AdminDomain, LAN: config.LAN, Resolvers: config.Resolvers, ManagerDial: config.ManagerDial, StaticRoot: config.StaticRoot, CaddyStorage: config.CaddyStorage, CertificateMode: config.CertificateMode, TemporaryAdminCertificate: config.TemporaryAdminCertificate, TemporaryAdminCertPath: config.TemporaryAdminCertPath(), TemporaryAdminKeyPath: config.TemporaryAdminKeyPath(), SetupCertPath: filepath.Join(config.DataDir, "secrets", "setup_tls.crt"), SetupKeyPath: filepath.Join(config.DataDir, "secrets", "setup_tls.key"), TestTLS: config.TestTLS, HTTPPort: config.HTTPPort, HTTPSPort: config.HTTPSPort}
+	return domain.CaddyConfig{Socket: config.Socket, AdminURL: config.AdminURL, Domains: config.Domains, ConsoleLANOnly: config.ConsoleLANOnly, PreviousAdminDomain: config.PreviousAdminDomain, AdminDomain: config.AdminDomain, LAN: config.LAN, Resolvers: config.Resolvers, ManagerDial: config.ManagerDial, StaticRoot: config.StaticRoot, CaddyStorage: config.CaddyStorage, CertificateMode: config.CertificateMode, TemporaryAdminCertificate: config.TemporaryAdminCertificate, TemporaryAdminCertPath: config.TemporaryAdminCertPath(), TemporaryAdminKeyPath: config.TemporaryAdminKeyPath(), SetupCertPath: filepath.Join(config.DataDir, "secrets", "setup_tls.crt"), SetupKeyPath: filepath.Join(config.DataDir, "secrets", "setup_tls.key"), TestTLS: config.TestTLS, HTTPPort: config.HTTPPort, HTTPSPort: config.HTTPSPort}
 }
 
 func validateHost(config Config) error {

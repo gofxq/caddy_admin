@@ -20,7 +20,7 @@ func TestManagementRouteMatrix(t *testing.T) {
 		"GET /api/v1/draft/revisions/:revision": true, "POST /api/v1/draft/validate": true,
 		"POST /api/v1/deployments": true, "GET /api/v1/deployments": true,
 		"GET /api/v1/deployments/:id": true, "GET /api/v1/audit": true,
-		"GET /api/v1/settings": true, "POST /api/v1/settings/cloudflare": true,
+		"GET /api/v1/settings": true, "PUT /api/v1/settings": true, "POST /api/v1/settings/console/complete": true, "POST /api/v1/settings/dns/preview": true, "POST /api/v1/settings/dns/confirm": true, "POST /api/v1/settings/cloudflare": true,
 		"GET /api/v1/certificates":         true,
 		"GET /api/v1/configuration/export": true, "POST /api/v1/configuration/preview": true, "POST /api/v1/configuration/import": true,
 	}

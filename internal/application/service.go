@@ -4,6 +4,7 @@ import (
 	"net"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gofxq/caddy_admin/internal/domain"
 )
@@ -36,8 +37,11 @@ type Service struct {
 	setupProbe          SetupProbe
 	resolverSuggestions func() []string
 	mu                  sync.Mutex
+	policyMu            sync.RWMutex
 	setupMu             sync.Mutex
 	owned               map[string]struct{}
+	activePolicy        atomic.Pointer[domain.ManagedSettings]
+	setupID             string
 }
 
 func New(options Options, repository Repository, caddy CaddyPort, dependencies Dependencies) *Service {
@@ -49,26 +53,41 @@ func New(options Options, repository Repository, caddy CaddyPort, dependencies D
 	if localAddresses == nil {
 		localAddresses = net.InterfaceAddrs
 	}
-	return &Service{
+	service := &Service{
 		options: options, repository: repository, caddy: caddy, resolver: resolver,
 		setupDNS: dependencies.SetupDNS, setupIntent: dependencies.SetupIntent,
 		certificates: dependencies.Certificates, snapshot: dependencies.Snapshot,
 		secrets: dependencies.Secrets, bootstrapTLS: dependencies.BootstrapCertificate,
 		localAddresses: localAddresses, owned: map[string]struct{}{},
 		setupProbe: dependencies.SetupProbe, resolverSuggestions: dependencies.ResolverSuggestions,
+		setupID: domain.ID(),
 	}
+	service.setActivePolicy(options.RuntimePolicy)
+	return service
 }
 
 func (service *Service) caddyConfig() domain.CaddyConfig {
-	return caddyConfigForOptions(service.options)
+	return service.caddyConfigFor(service.activeSettings())
 }
+
+func (service *Service) caddyConfigFor(policy domain.ManagedSettings) domain.CaddyConfig {
+	options := service.options
+	options.RuntimePolicy = policy
+	return caddyConfigForOptions(options)
+}
+
+func (service *Service) setActivePolicy(policy domain.ManagedSettings) {
+	service.activePolicy.Store(&policy)
+}
+func (service *Service) activeSettings() domain.ManagedSettings { return *service.activePolicy.Load() }
 
 func caddyConfigForOptions(options Options) domain.CaddyConfig {
 	policy := options.RuntimePolicy
 	return domain.CaddyConfig{
 		Socket: options.Socket, AdminURL: options.AdminURL,
-		PublicDomain: policy.PublicDomain, HomelabDomain: policy.HomelabDomain,
-		AdminDomain: policy.AdminDomain, LAN: policy.LAN, Resolvers: policy.Resolvers,
+		Domains: policy.Domains, ConsoleLANOnly: policy.ConsoleLANOnly,
+		PreviousAdminDomain: policy.PreviousAdminDomain,
+		AdminDomain:         policy.AdminDomain, LAN: policy.LAN, Resolvers: policy.Resolvers,
 		ManagerDial: options.ManagerDial, StaticRoot: options.StaticRoot,
 		CaddyStorage: options.CaddyStorage, CertificateMode: options.CertificateMode,
 		TemporaryAdminCertPath: filepath.Join(options.DataDir, "secrets", "admin_temporary_tls.crt"),

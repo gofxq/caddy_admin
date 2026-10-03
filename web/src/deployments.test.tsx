@@ -109,3 +109,10 @@ it('keeps querying the fixed task after its first detail request fails',async()=
  expect(await screen.findByText('发布 v2 已成功上线',{}, {timeout:4000})).toBeInTheDocument()
  expect(queries).toBeGreaterThan(1)
 })
+it('requires separate exposure confirmation when publishing an enabled internet service',async()=>{
+ const settings={origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[{id:'internet',name:'example.com',access:'internet'}],console_lan_only:false,lan_cidrs:[],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['1.1.1.1']}
+ const candidate={...preview,settings,active_settings:settings,settings_changed:false,services:[{...service,domain_id:'internet',hostname:'photos.example.com'}],changes:[{kind:'added',hostname:'photos.example.com',after:{...service,domain_id:'internet',hostname:'photos.example.com'}}]}
+ vi.mocked(api).mockImplementation(async path=>path.startsWith('/draft/')?candidate:{items:[]})
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><Deployments/></QueryClientProvider>)
+ fireEvent.click(await screen.findByText('校验配置'));await waitFor(()=>expect(screen.getByRole('button',{name:'确认发布'})).toBeEnabled());fireEvent.click(screen.getByRole('button',{name:'确认发布'}));expect(screen.getByRole('button',{name:'立即发布'})).toBeDisabled();fireEvent.click(screen.getByLabelText('我已核对域名与策略变更，确认放开访问范围。'));expect(screen.getByRole('button',{name:'立即发布'})).toBeEnabled()
+})

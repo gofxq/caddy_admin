@@ -2,6 +2,7 @@ import {parseConfiguration} from "./src/configuration.ts";
 import {validNewPassword} from "./src/password.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { Plugin } from "vite";
+import {exposureChanges,type ManagedSettings} from "./src/model.ts";
 import type {
   Audit,
   Change,
@@ -30,7 +31,7 @@ const page = <T>(items: T[], url: URL) => {
 const photos: Service = {
   id: "photos",
   name: "照片库",
-  group: "homelab",
+  domain_id: "home",
   hostname: "photos.home.example.com",
   scheme: "http",
   host: "10.77.0.8",
@@ -43,7 +44,7 @@ const photos: Service = {
 const grafana: Service = {
   id: "grafana",
   name: "监控面板",
-  group: "homelab",
+  domain_id: "home",
   hostname: "grafana.home.example.com",
   scheme: "http",
   host: "10.77.0.9",
@@ -56,7 +57,7 @@ const grafana: Service = {
 const home: Service = {
   id: "home",
   name: "智能家居",
-  group: "homelab",
+  domain_id: "home",
   hostname: "home.home.example.com",
   scheme: "http",
   host: "10.77.0.10",
@@ -80,7 +81,7 @@ function changes(before: Service[], after: Service[]): Change[] {
     else if (
       [
         "name",
-        "group",
+        "domain_id",
         "hostname",
         "scheme",
         "host",
@@ -142,7 +143,9 @@ function config(services: Service[]) {
 }
 
 export function createMockApi() {
-  const portableSettings={origin:"https://caddyadmin.home.example.com",public_domain:"",homelab_domain:"home.example.com",admin_domain:"caddyadmin.home.example.com",lan_cidrs:["10.0.0.0/8"],upstream_cidrs:["10.0.0.0/8"],allowed_names:[],denied_ips:["10.0.0.2"],resolvers:["10.77.0.1"]};
+  let portableSettings: ManagedSettings={origin:"https://caddyadmin.home.example.com",domains:[{id:"home",name:"home.example.com",access:"trusted"}],console_lan_only:false,admin_domain:"caddyadmin.home.example.com",lan_cidrs:["10.0.0.0/8"],upstream_cidrs:["10.0.0.0/8"],allowed_names:[],denied_ips:["10.0.0.2"],resolvers:["10.77.0.1"]};
+  let activeSettings=clone(portableSettings);
+  const deploymentSettings=new Map<string,ManagedSettings>();
   let authenticated = true;
   let revision = 7;
   let published = clone([photos, grafana]);
@@ -264,6 +267,7 @@ export function createMockApi() {
     const target = original?.services ?? draft;
     const result: Preview = {
       revision,
+      settings:clone(rollbackId?activeSettings:portableSettings),active_settings:clone(activeSettings),settings_changed:JSON.stringify(activeSettings)!==JSON.stringify(portableSettings),
       services: clone(target),
       changes: changes(published, target),
       config: config(target),
@@ -320,15 +324,15 @@ export function createMockApi() {
       authenticated = false;
       return { status: 204 };
     }
-    if(method==="GET" && path==="/configuration/export")return ok({format:"caddy-web-admin",version:1,settings:clone(portableSettings),services:draft.map(({name,group,hostname,scheme,host,port,enabled,notes})=>({name,group,hostname,scheme,host,port,enabled,notes}))});
+    if(method==="GET" && path==="/configuration/export")return ok({format:"caddy-web-admin",version:2,settings:clone(portableSettings),services:draft.map(({name,domain_id,hostname,scheme,host,port,enabled,notes})=>({name,domain_id,hostname,scheme,host,port,enabled,notes}))});
     if(method==="POST" && ["/configuration/preview","/configuration/import"].includes(path)){
       try {
         const value=parseConfiguration(JSON.stringify(input.configuration));
         const seen=new Set<string>();
         const services:Service[]=value.services.map(item=>{
           const hostname=item.hostname.trim().toLowerCase().replace(/\.+$/,"");
-          const label=hostname.slice(0,-("."+portableSettings.homelab_domain).length);
-          if(item.group!=="homelab"||!hostname.endsWith("."+portableSettings.homelab_domain)||!label||label.includes(".")||hostname===portableSettings.admin_domain||seen.has(hostname)||!item.name.trim()||!/^10\.(\d{1,3}\.){2}\d{1,3}$/.test(item.host)||item.host.split(".").some(v=>Number(v)>255)||portableSettings.denied_ips.includes(item.host))throw new Error("服务不符合演示实例的域名或网络策略");
+          const label=hostname.slice(0,-("."+portableSettings.domains.find(d=>d.id===item.domain_id)!.name).length);
+          if(item.domain_id!=="home"||!hostname.endsWith("."+portableSettings.domains.find(d=>d.id===item.domain_id)!.name)||!label||label.includes(".")||hostname===portableSettings.admin_domain||seen.has(hostname)||!item.name.trim()||!/^10\.(\d{1,3}\.){2}\d{1,3}$/.test(item.host)||item.host.split(".").some(v=>Number(v)>255)||portableSettings.denied_ips.includes(item.host))throw new Error("服务不符合演示实例的域名或网络策略");
           seen.add(hostname);
           return {...item,hostname,id:draft.find(old=>old.hostname===hostname)?.id??randomUUID(),dial:`${item.host}:${item.port}`,updated_at:now()};
         });
@@ -398,9 +402,26 @@ export function createMockApi() {
         recent: clone(deployments.slice(0, 3)),
         checked_at: now(),
       });
+    if(method==="POST"&&path==="/settings/dns/preview"){const domain=portableSettings.domains.find(d=>d.id===input.domain_id);if(!domain)return fail(422,"invalid","请选择已登记域名");return ok({name:`*.${domain.name}`,type:String(input.address).includes(":")?"AAAA":"A",address:input.address,action:"create",fingerprint:"mock-domain-dns"});}
+    if(method==="POST"&&path==="/settings/dns/confirm"){if(input.confirm!==true||input.fingerprint!=="mock-domain-dns")return fail(409,"conflict","请重新预览并确认 DNS 变更");return ok({confirmed:true});}
+    if(method==="PUT"&&path==="/settings"){
+      if(input.revision!==revision)return fail(409,"conflict","草稿已变化，请刷新后重新保存");
+      const candidate=input.settings as ManagedSettings;
+      try{parseConfiguration(JSON.stringify({format:"caddy-web-admin",version:2,settings:candidate,services:[]}));}catch{return fail(422,"invalid","域名与策略格式无效");}
+      if(candidate.console_lan_only&&!candidate.lan_cidrs.length)return fail(422,"invalid","启用控制台限制须填写可信网络");
+      if(exposureChanges(portableSettings,candidate)&&input.confirm_exposure!==true)return fail(422,"confirmation","请明确确认放开访问范围");
+      if(candidate.domains.some(d=>!d.name)||new Set(candidate.domains.map(d=>d.name)).size!==candidate.domains.length)return fail(422,"invalid","域名不能为空或重复");
+      if([...draft,...published].some(s=>!candidate.domains.some(d=>d.id===s.domain_id)))return fail(422,"invalid","域名仍有服务引用");
+      if(candidate.admin_domain!==portableSettings.admin_domain){candidate.previous_admin_domain=portableSettings.admin_domain;candidate.previous_origin=portableSettings.origin;candidate.origin=`https://${candidate.admin_domain}`;}
+      portableSettings=clone(candidate);revision++;validation=null;record("settings.save","draft");return ok({revision,settings:clone(portableSettings)});
+    }
+    if(method==="POST"&&path==="/settings/console/complete"){
+      if(input.revision!==revision||input.confirm!==true||!activeSettings.previous_admin_domain)return fail(409,"conflict","请从新控制台确认交接");
+      delete portableSettings.previous_admin_domain;delete portableSettings.previous_origin;revision++;validation=null;return ok({revision});
+    }
     if (method === "GET" && path === "/settings")
       return ok({
-        config: {...portableSettings, test_tls:false},
+        config: {...portableSettings, test_tls:false},active_config:clone(activeSettings),revision,
         manager_version: "演示模式",
         caddy_version: "演示模式",
         cloudflare_module: true,
@@ -481,7 +502,7 @@ export function createMockApi() {
         deploymentPolls.set(item.id,polls);
         if(polls>=2){
           item.status=deploymentOutcomes.get(item.id)??"success";
-          if(item.status==="success")published=clone(item.services);
+          if(item.status==="success"){published=clone(item.services);activeSettings=clone(deploymentSettings.get(item.id)??activeSettings);}
           if(item.status==="failed")item.error="演示：Caddy 拒绝候选配置，原运行配置保持不变";
           if(item.status==="uncertain")item.error="演示：响应丢失，实际运行状态待核对";
           if(item.status!=="uncertain")item.finished=now();
@@ -522,6 +543,7 @@ export function createMockApi() {
         rollback_id: validation.rollbackId,
         changes: clone(result.changes),
       };
+      deploymentSettings.set(deployment.id,clone(result.settings));
       deployments.unshift(deployment);
       const idempotency=String(input.idempotency_key??"");
       deploymentOutcomes.set(deployment.id,idempotency.startsWith("mock-failed")?"failed":idempotency.startsWith("mock-uncertain")?"uncertain":"success");

@@ -13,7 +13,7 @@ import (
 func fixtureConfiguration(t *testing.T, fixture *orchestrationFixture) application.Configuration {
 	t.Helper()
 	ctx := context.Background()
-	settings := domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", HomelabDomain: "home.example.test", AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"10.0.0.53"}}
+	settings := domain.ManagedSettings{Origin: "https://caddyadmin.home.example.test", Domains: []domain.ManagedDomain{{ID: "home", Name: "home.example.test", Access: domain.DomainAccess("trusted")}}, AdminDomain: "caddyadmin.home.example.test", LAN: []string{"10.0.0.0/8"}, UpstreamCIDRs: []string{"10.0.0.0/8"}, Resolvers: []string{"10.0.0.53"}}
 	if err := fixture.store.CompleteSetup(ctx, application.SetupCredentials{Username: "admin", Password: "a-secure-password"}, settings, domain.CertificateStatus{Mode: domain.CertificateModeBootstrapInternal, ActivationStatus: "idle", PublicStatus: "unknown"}); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func fixtureConfiguration(t *testing.T, fixture *orchestrationFixture) applicati
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Services = []application.PortableService{{Name: "Photos", Group: "homelab", Hostname: "photos.home.example.test", Scheme: "https", Host: "10.0.0.10", Port: 8443, Enabled: true, Notes: "Imported"}}
+	config.Services = []application.PortableService{{Name: "Photos", DomainID: "home", Hostname: "photos.home.example.test", Scheme: "https", Host: "10.0.0.10", Port: 8443, Enabled: true, Notes: "Imported"}}
 	return config
 }
 
@@ -60,11 +60,11 @@ func TestConfigurationImportRevalidatesAndNeverPublishes(t *testing.T) {
 		t.Fatal("duplicate hostnames accepted")
 	}
 	config.Services = config.Services[:1]
-	config.Version = 2
+	config.Version = 3
 	if _, err = fixture.service.PreviewConfiguration(ctx, config); err == nil {
 		t.Fatal("future file version accepted")
 	}
-	config.Version = 1
+	config.Version = 2
 	preview, err = fixture.service.PreviewConfiguration(ctx, config)
 	if err != nil || preview.Services[0].ID != id {
 		t.Fatalf("import did not retain hostname identity: %#v %v", preview, err)
@@ -83,7 +83,7 @@ func TestSetupImportedServicesAreAtomicAndRemainUnpublished(t *testing.T) {
 	config := fixtureConfiguration(t, fixture)
 	fresh := newOrchestrationFixture(t)
 	fresh.snapshot.raw = nil
-	request := application.SetupRequest{Username: "new-admin", Password: "fresh-admin-password", Settings: application.SetupSettings{HomelabDomain: config.Settings.HomelabDomain, LAN: config.Settings.LAN, UpstreamCIDRs: config.Settings.UpstreamCIDRs, Resolvers: config.Settings.Resolvers}, Services: config.Services, AcknowledgeWarnings: true}
+	request := application.SetupRequest{Username: "new-admin", Password: "fresh-admin-password", Settings: application.SetupSettings{Domain: config.Settings.Domains[0].Name, Resolvers: config.Settings.Resolvers, ImportSettings: &config.Settings}, ImportSettings: &config.Settings, Services: config.Services, AcknowledgeWarnings: true}
 	if _, err := fresh.service.CompleteSetup(context.Background(), request); err == nil {
 		t.Fatal("imported setup did not require confirmation")
 	}
