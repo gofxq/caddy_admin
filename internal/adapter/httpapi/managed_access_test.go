@@ -75,6 +75,15 @@ func TestPublicConsoleLoginAndExplicitSourceRestriction(t *testing.T) {
 						t.Fatal("authentication cookie protection lost")
 					}
 				}
+				portalRequest := httptest.NewRequest("GET", "/api/v1/portal", nil)
+				portalRequest.RemoteAddr = source
+				portalRequest.Header.Set("X-Forwarded-For", "10.0.0.7")
+				portalRequest.Header.Set(domain.ClientAddressHeader, "10.0.0.7")
+				portalResponse := httptest.NewRecorder()
+				api.Handler().ServeHTTP(portalResponse, portalRequest)
+				if portalResponse.Code != want {
+					t.Fatalf("anonymous portal source=%s status=%d body=%s", source, portalResponse.Code, portalResponse.Body)
+				}
 				staticResponse := httptest.NewRecorder()
 				staticRequest := httptest.NewRequest("GET", "/", nil)
 				staticRequest.RemoteAddr = source

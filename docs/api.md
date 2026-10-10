@@ -1,6 +1,16 @@
 # 业务 API
 
-统一前缀 `/api/v1`，浏览器通过控制台域名访问。返回 JSON；业务请求体最大 64 KiB。首次初始化开放 Setup 状态、预检、DNS 预览、确认与完成接口；临时交接监听器另开放只读 handoff。完成后除登录外，正式管理 API 均需要有效服务端会话。
+统一前缀 `/api/v1`，浏览器通过控制台域名访问。返回 JSON；业务请求体最大 64 KiB。首次初始化开放 Setup 状态、预检、DNS 预览、确认与完成接口；临时交接监听器另开放只读 handoff。完成后登录和只读服务导览接口无需会话，其他正式管理 API 均需要有效服务端会话。
+
+## 匿名服务导览
+
+`GET /api/v1/portal` 无需登录，返回最新成功发布版本中当前来源可见、已启用的服务。它沿用控制台来源限制：启用 `console_lan_only` 后非可信来源返回 `403 network_restricted`；「仅可信网络」域名的服务仅返回给已发布 `lan_cidrs` 内的来源。来源鉴别与管理接口共用，不信任任意转发头。
+
+```json
+{"services":[{"name":"照片库","hostname":"photos.example.com","url":"https://photos.example.com"}]}
+```
+
+响应只含名称、域名和 HTTPS 链接，按名称排序、同名按域名排序，不含服务 ID、上游、备注、草稿、凭据或完整配置。无成功发布或无可见服务时返回 `{"services":[]}`。数据读取失败返回 503；配置操作忙碌或有执行中、待核对的发布时返回 `503 policy_pending`，避免呈现未决访问策略。响应使用 `Cache-Control: no-store`，不执行健康检查，不证明实际配置与成功发布版本一致。接口只接受 GET，管理读写接口仍需认证。
 
 ## 认证与错误
 
@@ -161,3 +171,24 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 审计附带 `revision`、`rollback_id` 和安全 `error_class`；详情不包含密码哈希、会话、Token 或私钥。历史修订缺失时返回 404，不根据当前草稿重建。
 
 本地 `GET http://127.0.0.1:8081/ready` 不属于公开管理 API：仅绑定容器回环地址，主 HTTP、SQLite 与 Caddy 均可用才返回 200，否则 503。Compose 的 `manager health` 调用此接口。
+
+## 观测接口
+
+以下路径相对于 `/api/v1`，均要求管理员会话及完成首次改密；POST 沿用精确 Origin 与 CSRF 校验。设置新增布尔字段 `metrics_enabled`、`access_logs_enabled`、`alerts_enabled`、`upstream_checks_enabled`，默认 false，保存只修改草稿，显式发布后生效。配置导入导出 v2 可包含这些非敏感开关，省略时关闭。
+
+| 方法 / 路径 | 输入 | 返回 |
+| --- | --- | --- |
+| `GET /observability` | 无 | 指标和日志状态、最近采集时间、采集间隔、日志缺口和源端丢弃计数 |
+| `GET /traffic` | `from`、`to`（Unix 秒，默认最近 24 小时）、可选 `service_id` | 实际 `from/to`、`step`、`coverage/complete`、`summary`、`points`、历史 `services` |
+| `GET /logs` | `from/to`、`service_id`、`kind=access\|diagnostic`、`method`、`status`、`path`、`ip`、`limit`、`offset` | `items`、`limit`、`offset` |
+| `GET /alerts` | 无 | `items`：`id`、`service_id`、`kind`、`status`、`message`、`first_seen/last_seen/resolved_at`、`acknowledged` |
+| `POST /alerts/:id/acknowledge` | `{}` | `acknowledged: true`，记录审计 |
+| `POST /diagnostics` | `{"domain_id":"已发布域名ID"}` | `domain_id`、`checked_at`、`vantage`、`checks`、脱敏 `events` |
+
+Traffic 时间范围最多 365 天，未来时间容差 1 分钟。只包含请求范围内完整原始聚合桶，返回的实际边界可能收窄；不足一个桶时为空。`step` 按范围调整，最多 1000 点；超过 200000 原始样本的查询返回 422，应缩短时间或选服务。`summary/points` 包含 `requests`、`request_bytes/response_bytes`、`five_xx`、`statuses`、`p50/p95/p99`、`first_byte_p95`、`quantile_lower_bound`；无请求时分位数为 null，不伪造零延迟。
+
+日志最多查询最近 7 天、每页 1–100 条（默认 50）、offset 0–100000。状态码为 100–599；路径/IP 必须按已保存脱敏值搜索。未知、重复查询参数以及任意诊断目标会被拒绝。观测查询最多 2 个并发，繁忙或诊断重入返回 429；观测存储不可用返回 503，其他管理功能独立运行。
+
+告警状态为 `active`、`unknown`、`resolved` 或 `disabled`。确认不关闭规则；缺采、低流量或失效的运行绑定保持 unknown。诊断只接受已发布登记域名 ID，不接受 hostname、URL、IP 或 resolver 覆盖；单次限制 15 秒，返回信息明确标记 Manager 视角。
+
+Caddy 的 `/metrics` 和 `/caddy-admin/observability/logs` 仅通过受保护的 Admin API 读取，不映射为公共业务路由，不应暴露到互联网。

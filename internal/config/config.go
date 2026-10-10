@@ -15,6 +15,10 @@ import (
 const Version = "0.1.0"
 
 type Config struct {
+	MetricsEnabled            bool                   `json:"metrics_enabled"`
+	AccessLogsEnabled         bool                   `json:"access_logs_enabled"`
+	AlertsEnabled             bool                   `json:"alerts_enabled"`
+	UpstreamChecksEnabled     bool                   `json:"upstream_checks_enabled"`
 	DataDir                   string                 `json:"-"`
 	SnapshotDir               string                 `json:"-"`
 	Socket                    string                 `json:"-"`
@@ -59,10 +63,11 @@ func CloudflareTokenPath(dataDir string) string {
 }
 
 func (config Config) ManagedSettings() domain.ManagedSettings {
-	return domain.ManagedSettings{Origin: config.Origin, Domains: config.Domains, ConsoleLANOnly: config.ConsoleLANOnly, PreviousAdminDomain: config.PreviousAdminDomain, PreviousOrigin: config.PreviousOrigin, AdminDomain: config.AdminDomain, LAN: config.LAN, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, DeniedIPs: config.DeniedIPs, Resolvers: config.Resolvers}
+	return domain.ManagedSettings{MetricsEnabled: config.MetricsEnabled, AccessLogsEnabled: config.AccessLogsEnabled, AlertsEnabled: config.AlertsEnabled, UpstreamChecksEnabled: config.UpstreamChecksEnabled, Origin: config.Origin, Domains: config.Domains, ConsoleLANOnly: config.ConsoleLANOnly, PreviousAdminDomain: config.PreviousAdminDomain, PreviousOrigin: config.PreviousOrigin, AdminDomain: config.AdminDomain, LAN: config.LAN, UpstreamCIDRs: config.UpstreamCIDRs, AllowedNames: config.AllowedNames, DeniedIPs: config.DeniedIPs, Resolvers: config.Resolvers}
 }
 
 func ApplyManagedSettings(config *Config, settings domain.ManagedSettings) error {
+	config.MetricsEnabled, config.AccessLogsEnabled, config.AlertsEnabled, config.UpstreamChecksEnabled = settings.MetricsEnabled, settings.AccessLogsEnabled, settings.AlertsEnabled, settings.UpstreamChecksEnabled
 	config.Origin, config.Domains, config.AdminDomain = settings.Origin, settings.Domains, settings.AdminDomain
 	config.ConsoleLANOnly, config.PreviousAdminDomain, config.PreviousOrigin = settings.ConsoleLANOnly, settings.PreviousAdminDomain, settings.PreviousOrigin
 	config.LAN, config.UpstreamCIDRs, config.AllowedNames, config.DeniedIPs, config.Resolvers = settings.LAN, settings.UpstreamCIDRs, settings.AllowedNames, settings.DeniedIPs, settings.Resolvers

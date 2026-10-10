@@ -177,3 +177,24 @@ docker compose -f compose.yaml -f compose.external.yaml up -d
 GitHub Actions 的 `verify` 工作流在默认分支 push 或手动运行时，先完成检查和本地镜像构建，再发布 `ghcr.io/gofxq/caddy-admin:latest` 及 `sha-完整提交SHA`，构建目标为 `app`，平台为 `linux/amd64` 和 `linux/arm64`。PR、其他分支和 fork 不发布该镜像；使用工作流自身的 `GITHUB_TOKEN` 和 `packages: write` 权限，无需额外 registry 密钥。
 
 维护者首次发布后，将 GitHub Packages 中的 `caddy-admin` 包设为 Public，使用户可匿名拉取。若同名包已经存在，确认它关联到 `gofxq/caddy_admin` 并允许该仓库工作流写入。首次发布与公开设置完成前，安装命令无法拉取镜像，可使用源码构建覆盖文件。
+
+## 可选观测的持久化与维护
+
+观测默认关闭，经设置草稿与显式发布启用。内置镜像编译固定标签指标、写前脱敏访问日志与签发诊断模块；不需要 Prometheus、Grafana 或 Loki。观测数据库及查询失败不参与 readiness，不阻断代理、登录或发布。
+
+| 数据 | 默认位置 / 限额 |
+| --- | --- |
+| 独立派生数据库 | `.run/manager/observability.db`，文件 0600，主数据库最多 256 MiB；SQLite WAL 自动 checkpoint，journal 保留目标 8 MiB（活跃事务期间可能暂时增长） |
+| 指标历史 | 15 秒保留 1 小时；1 分钟 7 天；5 分钟 30 天；1 小时 180 天；1 天 365 天，过期数据分批删除 |
+| 访问/签发事件索引 | 最多 7 天、100000 条；游标、丢弃记录与告警持久化在同一观测库 |
+| Caddy 脱敏源文件 | 默认 `.run/caddy-data/caddy/admin-observability/access.jsonl`（容器 `/data/caddy/admin-observability/access.jsonl`），0600，16 MiB 加一份轮转 |
+| 内存与读取 | 日志队列 1024、源端历史 ring 2000；每 15 秒最多索引 4 页，每页 500 条；采集响应 8 MiB，最多 30000 个样本/series |
+| 业务规模与查询 | 开启任一观测开关时最多 500 个服务、64 个登记域名；查询最多 1000 点、200000 原始样本、2 并发，超限提示缩小范围 |
+
+源端写盘是异步的；队列满、磁盘错误、源端重载、索引落后超过 ring 或 Manager 长时间停止可能造成缺口。UI 会显示不可用或缺口，不把丢弃数据补为零。重启通过持久化游标去重，历史服务归属从最近 100 次成功发布恢复（最多 2000 个 ID/hostname）；更早且尚未索引的源事件可能无法归属，并标记缺口。保留期限是时间上限，不保证在容量上限内保存满期数据；服务数量、请求分布和日志量会影响可用历史。数据库容量上限不是磁盘可用空间保证，仍须监控宿主机空间并按停服一致性快照流程保护数据。
+
+观测库是派生历史，不是业务状态来源；它损坏或版本不支持时 Manager 继续提供核心功能，观测显示不可用。处理时先检查空间与权限并重启；确需重建时由管理员停服保护原文件后处理观测库及其 WAL/SHM。不要删除 `manager.db`、启动快照或 Caddy 数据来绕过失败。项目没有自动观测修复、历史导出或新增备份恢复 CLI。
+
+外部 Caddy 需要以 `deploy/caddy` 相同模块构建运行；项目不会自动更换远端二进制。设置开关仅在确认发布时进入生成配置，普通采集只读远端 Admin API。远端无模块、日志不可用或 metrics 不可达显示 unknown/unavailable；HTTPS 信任链和禁止重定向规则不变。外部日志文件保存在外部 Caddy 的 AppDataDir，Manager 通过既有 Admin 连接读取脱敏 ring，不挂载远端磁盘或 Docker Socket。外部证书和日志源另行保护。
+
+周期 TCP 检查来自 Manager，每分钟最多 4 个服务，服务多时每个服务的检查间隔相应增加；只连接已发布、安全校验的地址快照，不重新解析并连接新地址。TCP 成功不代表 HTTP、HTTPS 证书或应用健康。指标告警需要完整 5 分钟和至少 20 个完成请求，日志和签发线索仅供定位，不自动发布、回滚或重试证书签发。

@@ -24,6 +24,7 @@ type Dependencies struct {
 }
 
 type Service struct {
+	observer            *Observer
 	upstreamProbe       UpstreamProbe
 	upstreamMu          sync.Mutex
 	setupDNS            SetupDNS
@@ -89,6 +90,7 @@ func caddyConfigForOptions(options Options) domain.CaddyConfig {
 	policy := options.RuntimePolicy
 	return domain.CaddyConfig{
 		Socket: options.Socket, AdminURL: options.AdminURL,
+		MetricsEnabled: policy.MetricsEnabled, AccessLogsEnabled: policy.AccessLogsEnabled, AlertsEnabled: policy.AlertsEnabled, UpstreamChecksEnabled: policy.UpstreamChecksEnabled,
 		Domains: policy.Domains, ConsoleLANOnly: policy.ConsoleLANOnly,
 		PreviousAdminDomain: policy.PreviousAdminDomain,
 		AdminDomain:         policy.AdminDomain, LAN: policy.LAN, Resolvers: policy.Resolvers,

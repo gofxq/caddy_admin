@@ -2,6 +2,7 @@ import {parseConfiguration} from "../configuration.ts";
 import {validNewPassword} from "../password.ts";
 import {exposureChanges,type ManagedSettings} from "../model.ts";
 import type {
+  Alert, TrafficStats,
   Audit,
   Change,
   Deployment,
@@ -162,7 +163,8 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
   const staticDemo=options.staticDemo===true;
   let initialized=!options.setup,username="admin",tokenConfigured=false;
   let portableSettings: ManagedSettings={origin:"https://caddyadmin.home.example.com",domains:[{id:"home",name:"home.example.com",access:"trusted"}],console_lan_only:false,admin_domain:"caddyadmin.home.example.com",lan_cidrs:["10.0.0.0/8"],upstream_cidrs:["10.0.0.0/8"],allowed_names:[],denied_ips:["10.0.0.2"],resolvers:["10.77.0.1"]};
-  let activeSettings=clone(portableSettings);
+  portableSettings={...portableSettings,metrics_enabled:false,access_logs_enabled:false,alerts_enabled:false,upstream_checks_enabled:false};
+ let activeSettings=clone(portableSettings);
   const deploymentSettings=new Map<string,ManagedSettings>();
   let authenticated = true;
   let revision = 7;
@@ -308,7 +310,8 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
     return result;
   };
 
-  function handle(method: string, rawUrl: string, body?: unknown): Result {
+  const observationAlerts:Alert[]=[];
+ function handle(method: string, rawUrl: string, body?: unknown): Result {
     const url = new URL(rawUrl, "http://localhost");
     const path = url.pathname;
     const input =
@@ -350,6 +353,11 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
         must_change: false,
         expires: Date.now() + 43200000,
       });
+    }
+    // Demo requests represent a trusted-network visitor, including anonymous visits.
+    if(method==='GET'&&path==='/portal'){
+      if(deployments.some(d=>d.status==='applying'||d.status==='uncertain'))return fail(503,'policy_pending','配置正在发布或等待核对，请稍后重试');
+      return ok({services:published.filter(s=>s.enabled&&activeSettings.domains.some(d=>d.id===s.domain_id&&(d.access==='internet'||d.access==='trusted'))).map(s=>({name:s.name,hostname:s.hostname,url:`https://${s.hostname}`})).sort((a,b)=>a.name.toLowerCase()<b.name.toLowerCase()?-1:a.name.toLowerCase()>b.name.toLowerCase()?1:a.hostname.localeCompare(b.hostname))});
     }
     if (!authenticated) return fail(401, "unauthorized", "请先登录演示会话");
     if(staticDemo&&method==='POST'&&path==='/demo/services'){
@@ -452,6 +460,16 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       );
       return ok({ revision });
     }
+    if(method==='GET'&&path==='/observability')return ok({state:activeSettings.metrics_enabled?'ready':'disabled',message:activeSettings.metrics_enabled?'演示采集中；这些数值是模拟数据，未连接 Caddy':'观测尚未启用；在设置中保存草稿并模拟发布',last_attempt:now(),last_sample:activeSettings.metrics_enabled?now():'',logs_state:activeSettings.access_logs_enabled?'ready':'disabled',log_gap:false,dropped_logs:0,interval_seconds:15,external_caddy:false});
+    if(method==='GET'&&path==='/traffic'){
+      const to=Number(url.searchParams.get('to'))||Math.floor(Date.now()/1000),from=Number(url.searchParams.get('from'))||to-86400,id=url.searchParams.get('service_id'),enabled=activeSettings.metrics_enabled===true;
+      const stats:TrafficStats={requests:enabled?120:0,request_bytes:enabled?12800:0,response_bytes:enabled?512000:0,five_xx:enabled?2:0,statuses:enabled?{'2xx':118,'5xx':2}:{},p50:enabled?.08:null,p95:enabled?.25:null,p99:enabled?.7:null,first_byte_p95:enabled?.04:null,quantile_lower_bound:false};
+      return ok({from,to,step:Math.max(60,Math.floor((to-from)/24)),coverage:enabled?1:0,complete:enabled,summary:{...stats,requests:stats.requests*24,request_bytes:stats.request_bytes*24,response_bytes:stats.response_bytes*24,five_xx:stats.five_xx*24},points:enabled?Array.from({length:24},(_,i)=>({...stats,time:Math.floor(from+(to-from)*i/24)})):[],services:published.filter(s=>s.enabled&&(!id||s.id===id)).map(s=>({id:s.id,hostname:s.hostname}))});
+    }
+    if(method==='GET'&&path==='/logs'){const id=url.searchParams.get('service_id'),items=activeSettings.access_logs_enabled?published.filter(s=>s.enabled&&(!id||s.id===id)).map((s,i)=>({epoch:'demo',sequence:i+1,time:now(),kind:'access',service_id:s.id,hostname:s.hostname,method:'GET',status:200,path:'/api/*',ip:'10.77.0.0/24',duration_seconds:.08,request_bytes:0,response_bytes:1024})):[];return ok({items:items.filter(e=>(!url.searchParams.get('method')||e.method===url.searchParams.get('method'))&&(!url.searchParams.get('status')||e.status===Number(url.searchParams.get('status')))&&(!url.searchParams.get('path')||e.path===url.searchParams.get('path'))&&(!url.searchParams.get('ip')||e.ip===url.searchParams.get('ip'))).slice(Number(url.searchParams.get('offset'))||0),offset:Number(url.searchParams.get('offset'))||0,limit:50});}
+    if(method==='GET'&&path==='/alerts')return ok({items:clone(observationAlerts)});
+    if(method==='POST'&&/^\/alerts\/[^/]+\/acknowledge$/.test(path)){const id=decodeURIComponent(path.split('/')[2]),a=observationAlerts.find(a=>a.id===id);if(!a)return fail(404,'not_found','告警不存在');a.acknowledged=true;record('alert.acknowledge',id);return ok({acknowledged:true});}
+    if(method==='POST'&&path==='/diagnostics'){if(Object.keys(input).some(k=>k!=='domain_id'))return fail(422,'invalid','只接受登记域名 ID');const d=activeSettings.domains.find(d=>d.id===input.domain_id);if(!d)return fail(404,'not_found','只能诊断已生效的登记域名');return ok({domain_id:d.id,checked_at:now(),vantage:'manager',checks:[{name:'DNS / CAA / TLS 演示',status:'unknown',message:'演示界面未进行真实网络或证书检查',values:[]}],events:[]});}
     if (method === "GET" && path === "/overview")
       return ok({
         reachable: true,

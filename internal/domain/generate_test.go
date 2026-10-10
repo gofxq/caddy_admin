@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -63,5 +64,38 @@ func TestDomainHasNoOuterLayerImports(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("domain depends on outer layer %q", forbidden)
 		}
+	}
+}
+
+func TestGeneratedObservationIsExplicitAndHasFixedBusinessLabels(t *testing.T) {
+	c := domain.CaddyConfig{Socket: "/tmp/c.sock", AdminDomain: "admin.example.test", Domains: []domain.ManagedDomain{{ID: "home", Name: "example.test", Access: domain.DomainAccess("trusted")}}, LAN: []string{"10.0.0.0/8"}, HTTPPort: "80", HTTPSPort: "443", MetricsEnabled: true, AccessLogsEnabled: true}
+	raw, err := domain.Generate(c, []domain.Service{{ID: "stable-id", DomainID: "home", Hostname: "app.example.test", Enabled: true, Dial: "10.0.0.1:80"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), `"handler": "admin_observe"`) != 2 || strings.Contains(string(raw), `"per_host"`) || !strings.Contains(string(raw), `"caddy_admin_observability"`) {
+		t.Fatalf("unsafe or missing metrics: %s", raw)
+	}
+	c.MetricsEnabled = false
+	c.AccessLogsEnabled = false
+	raw, err = domain.Generate(c, nil)
+	if err != nil || strings.Contains(string(raw), "admin_observe") {
+		t.Fatal("observation enabled by default")
+	}
+}
+
+func TestBackgroundObservationAlsoBoundsServiceCount(t *testing.T) {
+	c := domain.CaddyConfig{AlertsEnabled: true}
+	list := make([]domain.Service, 501)
+	for i := range list {
+		list[i].Hostname = fmt.Sprintf("s%d.example.test", i)
+	}
+	if _, err := domain.Generate(c, list); err == nil || !strings.Contains(err.Error(), "500") {
+		t.Fatal("unbounded background alerts accepted")
+	}
+	c.AlertsEnabled = false
+	c.UpstreamChecksEnabled = true
+	if _, err := domain.Generate(c, list); err == nil || !strings.Contains(err.Error(), "500") {
+		t.Fatal("unbounded background probes accepted")
 	}
 }

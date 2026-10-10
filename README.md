@@ -26,6 +26,8 @@ docker compose up -d
 
 默认使用 `ghcr.io/gofxq/caddy-admin:latest`，无需 clone 源码或本地构建。
 
+已发布服务的快速入口：访问控制台域名下的 `/portal` 打开无需登录的「服务导览」。仅展示当前来源可见、已发布且启用的服务；详见[使用指南](docs/usage.md#服务导览)。
+
 ## 完整流程
 ![workflow](docs/static/caddy_admin.excalidraw.svg)
 
@@ -34,6 +36,10 @@ docker compose up -d
 可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；Setup 只确认使用，不回显。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
 
 首次登录后在设置中配置域名访问范围和上游许可，再添加服务、预览、校验与确认发布。控制台 LAN/VPN 限制为登录后的可选项。
+
+## 可选观测与排障
+
+设置中可启用指标、脱敏日志、站内告警与后台 TCP 检查，经明确发布后生效，默认关闭。概览和流量页提供请求量、体字节、5xx、延迟趋势；服务详情可查询单服务历史及脱敏日志，并手动检查 DNS/CAA/TLS。数据保存在本地，不依赖外部监控平台。统计口径、保留期限及外部 Caddy 模块要求见[使用指南](docs/usage.md#流量日志诊断与站内告警)。
 
 ## 功能演示
 

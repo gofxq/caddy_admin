@@ -1,12 +1,14 @@
 .PHONY: test build dev web static-web check integration container-test single-up validation-up validation-status validation-logs validation-down
 test:
 	go test -race ./cmd/... ./internal/...
+	cd deploy/caddy && go test -race ./observability
 	cd web && corepack pnpm test
 build:
 	go build -o bin/manager ./cmd/manager
 	cd web && corepack pnpm build
 check:
 	go vet ./cmd/... ./internal/...
+	cd deploy/caddy && go vet ./...
 	go mod verify
 	cd deploy/caddy && go mod verify
 integration:

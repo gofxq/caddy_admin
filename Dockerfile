@@ -4,6 +4,7 @@ WORKDIR /src
 COPY deploy/caddy/go.mod deploy/caddy/go.sum ./
 RUN go mod download
 COPY deploy/caddy/main.go ./
+COPY deploy/caddy/observability ./observability
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /usr/bin/caddy .
 
 FROM golang:1.26-alpine AS manager-build

@@ -15,6 +15,7 @@ import (
 )
 
 type Application interface {
+	Portal(context.Context, string) ([]domain.PortalService, error)
 	ServiceDetail(context.Context, string) (domain.ServiceDetail, error)
 	CheckUpstream(context.Context, string, string, string) (domain.UpstreamCheck, error)
 	ExportConfiguration(context.Context) (application.Configuration, error)
@@ -53,21 +54,22 @@ type Options struct {
 }
 
 type API struct {
-	application  Application
-	options      Options
-	loginMu      sync.Mutex
-	loginClients map[string]bool
-	authSlots    chan struct{}
-	certMu       sync.Mutex
-	certificates []domain.Certificate
-	certTime     time.Time
-	restart      func()
-	rescueEntry  atomic.Bool
-	consoleSeen  func()
+	observationSlots chan struct{}
+	application      Application
+	options          Options
+	loginMu          sync.Mutex
+	loginClients     map[string]bool
+	authSlots        chan struct{}
+	certMu           sync.Mutex
+	certificates     []domain.Certificate
+	certTime         time.Time
+	restart          func()
+	rescueEntry      atomic.Bool
+	consoleSeen      func()
 }
 
 func New(application Application, options Options) *API {
-	return &API{application: application, options: options, authSlots: make(chan struct{}, 2), loginClients: map[string]bool{}}
+	return &API{application: application, options: options, authSlots: make(chan struct{}, 2), observationSlots: make(chan struct{}, 2), loginClients: map[string]bool{}}
 }
 
 func (api *API) Handler() http.Handler {
@@ -80,12 +82,19 @@ func (api *API) Handler() http.Handler {
 		c.Next()
 	})
 	router.POST("/api/v1/auth/login", api.login)
+	router.GET("/api/v1/portal", api.portal)
 	authenticated := router.Group("/api/v1", api.authenticate())
 	authenticated.GET("/auth/session", func(c *gin.Context) { respondJSON(c, http.StatusOK, sessionFromContext(c)) })
 	authenticated.POST("/auth/logout", api.logout)
 	authenticated.POST("/auth/password", api.password)
 	management := authenticated.Group("", api.requireChangedPassword())
 	management.GET("/overview", api.overview)
+	management.GET("/observability", api.observationStatus)
+	management.GET("/traffic", api.traffic)
+	management.GET("/logs", api.accessLogs)
+	management.GET("/alerts", api.alerts)
+	management.POST("/alerts/:id/acknowledge", api.acknowledgeAlert)
+	management.POST("/diagnostics", api.diagnose)
 	management.GET("/services", api.services)
 	management.GET("/services/:id", api.serviceDetail)
 	management.POST("/services/:id/check-upstream", api.checkUpstream)
