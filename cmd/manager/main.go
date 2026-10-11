@@ -23,6 +23,7 @@ import (
 	"github.com/gofxq/caddy_admin/internal/adapter/cloudflare"
 	"github.com/gofxq/caddy_admin/internal/adapter/gormstore"
 	"github.com/gofxq/caddy_admin/internal/adapter/httpapi"
+	observationstore "github.com/gofxq/caddy_admin/internal/adapter/observability"
 	"github.com/gofxq/caddy_admin/internal/application"
 	"github.com/gofxq/caddy_admin/internal/config"
 	"github.com/gofxq/caddy_admin/internal/domain"
@@ -214,6 +215,16 @@ func run() error {
 	}()
 	life, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	obsStore, obsErr := observationstore.Open(filepath.Join(c.DataDir, "observability.db"))
+	var observationRepository application.ObservationStore
+	if obsErr != nil {
+		slog.Warn("observability_storage_unavailable", "error_class", "unavailable")
+	} else {
+		observationRepository = obsStore
+	}
+	obsClient := caddyadapter.NewClient(caddyadapter.Options{AdminURL: c.AdminURL, Socket: c.Socket, CaddyBinary: c.CaddyBinary, DataDir: c.DataDir})
+	service.StartObservability(life, obsClient, observationRepository, &caddyadapter.ObservationDiagnostics{})
+	defer service.StopObservability()
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()

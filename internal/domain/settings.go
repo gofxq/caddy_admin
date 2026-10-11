@@ -32,17 +32,21 @@ func (s ManagedSettings) AdminBase() string {
 }
 
 type ManagedSettings struct {
-	Origin              string          `json:"origin"`
-	Domains             []ManagedDomain `json:"domains"`
-	ConsoleLANOnly      bool            `json:"console_lan_only"`
-	PreviousAdminDomain string          `json:"previous_admin_domain,omitempty"`
-	PreviousOrigin      string          `json:"previous_origin,omitempty"`
-	AdminDomain         string          `json:"admin_domain"`
-	LAN                 []string        `json:"lan_cidrs"`
-	UpstreamCIDRs       []string        `json:"upstream_cidrs"`
-	AllowedNames        []string        `json:"allowed_names"`
-	DeniedIPs           []string        `json:"denied_ips"`
-	Resolvers           []string        `json:"resolvers"`
+	MetricsEnabled        bool            `json:"metrics_enabled"`
+	AccessLogsEnabled     bool            `json:"access_logs_enabled"`
+	AlertsEnabled         bool            `json:"alerts_enabled"`
+	UpstreamChecksEnabled bool            `json:"upstream_checks_enabled"`
+	Origin                string          `json:"origin"`
+	Domains               []ManagedDomain `json:"domains"`
+	ConsoleLANOnly        bool            `json:"console_lan_only"`
+	PreviousAdminDomain   string          `json:"previous_admin_domain,omitempty"`
+	PreviousOrigin        string          `json:"previous_origin,omitempty"`
+	AdminDomain           string          `json:"admin_domain"`
+	LAN                   []string        `json:"lan_cidrs"`
+	UpstreamCIDRs         []string        `json:"upstream_cidrs"`
+	AllowedNames          []string        `json:"allowed_names"`
+	DeniedIPs             []string        `json:"denied_ips"`
+	Resolvers             []string        `json:"resolvers"`
 }
 
 type CertificateStatus struct {

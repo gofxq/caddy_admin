@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -288,5 +289,135 @@ func TestCloudflareValidationReadsRestrictedSecretFile(t *testing.T) {
 	client := NewClient(Options{Socket: config.Socket, CaddyBinary: binary, DataDir: dir})
 	if err = client.Validate(context.Background(), raw); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCaddyIntegrationObservationMetricsLogsUnknownHostsAndReload(t *testing.T) {
+	binary := os.Getenv("CADDY_INTEGRATION_BINARY")
+	if binary == "" {
+		t.Skip("set CADDY_INTEGRATION_BINARY")
+	}
+	dir := t.TempDir()
+	c := integrationConfig(t, dir)
+	c.MetricsEnabled = true
+	c.AccessLogsEnabled = true
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(201)
+		io.WriteString(w, "OK")
+	}))
+	defer upstream.Close()
+	raw, err := domain.Generate(c, []domain.Service{{ID: "stable", DomainID: "home", Hostname: "app.home.example.test", Enabled: true, Scheme: "http", Dial: strings.TrimPrefix(upstream.URL, "http://")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Options{Socket: c.Socket, CaddyBinary: binary, DataDir: dir})
+	if err = client.Validate(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filepath.Join(dir, "caddy", "admin-observability", "access.jsonl")); !os.IsNotExist(err) {
+		t.Fatal("validate wrote runtime logs")
+	}
+	path := filepath.Join(dir, "active.json")
+	os.WriteFile(path, raw, 0600)
+	command := exec.Command(binary, "run", "--config", path)
+	command.Env = append(os.Environ(), "XDG_DATA_HOME="+dir, "XDG_CONFIG_HOME="+dir)
+	command.Stdout, command.Stderr = io.Discard, io.Discard
+	if err = command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { command.Process.Signal(os.Interrupt); command.Wait() }()
+	for range 60 {
+		if _, err = client.Read(context.Background()); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Admin listener can be ready before asynchronous internal certificate issuance.
+	// Wait for TLS without an HTTP request so readiness does not alter counters.
+	for range 60 {
+		conn, handshakeErr := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", "127.0.0.1:"+c.HTTPSPort, &tls.Config{InsecureSkipVerify: true, ServerName: "app.home.example.test"})
+		err = handshakeErr
+		if err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("test certificate not ready: %v", err)
+	}
+	web := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: "app.home.example.test"}}, Timeout: 3 * time.Second}
+	defer web.CloseIdleConnections() // isolated internal CA
+	request, _ := http.NewRequest("POST", "https://127.0.0.1:"+c.HTTPSPort+"/api/private?token=secret", strings.NewReader("hello"))
+	request.Host = "app.home.example.test"
+	request.Header.Set("Authorization", "Bearer secret")
+	resp, err := web.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatal(resp.StatusCode)
+	}
+	snapshot, err := client.Metrics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0.0
+	for _, v := range snapshot.Series {
+		if v.Kind == "duration_count" {
+			count += v.Value
+		}
+	}
+	if count != 1 {
+		t.Fatal("wrong request count", count)
+	}
+	for i := 0; i < 10; i++ {
+		request, _ := http.NewRequest("GET", "https://127.0.0.1:"+c.HTTPSPort+"/", nil)
+		request.Host = fmt.Sprintf("unknown-%d.home.example.test", i)
+		resp, err = web.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Fatal("unknown host forwarded")
+		}
+	}
+	after, err := client.Metrics(context.Background())
+	if err != nil || len(after.Series) != len(snapshot.Series) {
+		t.Fatal("unknown HTTPS Host created labels", err)
+	}
+	var logs domain.LogBatch
+	for range 30 {
+		logs, err = client.Logs(context.Background(), "", 0)
+		if err == nil && len(logs.Items) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil || !logs.Available || len(logs.Items) != 1 {
+		t.Fatal(logs, err)
+	}
+	encoded, _ := json.Marshal(logs)
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "private") || logs.Items[0].RequestBytes != 5 || logs.Items[0].ResponseBytes != 2 {
+		t.Fatalf("unsanitized or inaccurate logs: %s", encoded)
+	}
+	c.StaticRoot = filepath.Join(dir, "changed")
+	next, err := domain.Generate(c, []domain.Service{{ID: "stable", DomainID: "home", Hostname: "app.home.example.test", Enabled: true, Scheme: "http", Dial: strings.TrimPrefix(upstream.URL, "http://")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Load(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	after, err = client.Metrics(context.Background())
+	if err != nil || after.Epoch == snapshot.Epoch {
+		t.Fatal("reload did not reset epoch", err)
 	}
 }

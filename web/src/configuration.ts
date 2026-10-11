@@ -11,9 +11,11 @@ export function parseConfiguration(raw:string):Configuration{
  const value=record(decoded,['format','version','settings','services'])
  if(value.format!=='caddy-web-admin'||value.version!==2)throw new Error('不支持的配置文件格式或版本。')
  const strings=['origin','admin_domain'],arrays=['lan_cidrs','upstream_cidrs','allowed_names','denied_ips','resolvers']
+ const booleans=['metrics_enabled','access_logs_enabled','alerts_enabled','upstream_checks_enabled'].filter(k=>value.settings&&typeof value.settings==='object'&&k in value.settings)
  const optional=['previous_admin_domain','previous_origin'].filter(k=>value.settings&&typeof value.settings==='object'&&k in value.settings)
- const settings=record(value.settings,[...strings,...arrays,'domains','console_lan_only',...optional])
+ const settings=record(value.settings,[...strings,...arrays,'domains','console_lan_only',...optional,...booleans])
  if([...strings,...optional].some(k=>typeof settings[k]!=='string')||arrays.some(k=>!Array.isArray(settings[k])||(settings[k] as unknown[]).some(v=>typeof v!=='string')))throw invalid()
+ if(booleans.some(k=>typeof settings[k]!=='boolean'))throw invalid()
  if(typeof settings.console_lan_only!=='boolean'||!Array.isArray(settings.domains))throw invalid()
  for(const item of settings.domains){const d=record(item,['id','name','access']);if(typeof d.id!=='string'||typeof d.name!=='string'||!(d.access===null||d.access==='trusted'||d.access==='internet'))throw invalid()}
  if(!Array.isArray(value.services))throw invalid()

@@ -46,3 +46,11 @@ Setup 自动测试覆盖浏览器 DoH 查询、地址族与通配符、超时与
 - 当前 v7 数据重启保留、宿主机级加密快照与完整恢复演练。
 
 历史测试结果见[归档记录](../.archive/docs/verification-history.md)，不替代当前版本的验证。
+
+## 观测验收边界
+
+`make test` 包含根模块 Go race、Caddy 观测模块 race 与前端测试；`make check` 同时检查两个 Go 模块；`make integration` 从当前源码构建真实 Caddy，验证观测配置校验、业务请求 metrics 与脱敏日志、未知 HTTPS Host 不新增标签以及重载 epoch 改变。夹具只使用临时目录、Unix Socket、回环随机端口和内部测试 CA。
+
+自动测试另覆盖 Counter 重置/断采/发布归属、Histogram 插值、五级存储、历史范围边界、服务 ID 不串接、数据库权限、日志去重/持久化游标/首次截断/历史服务恢复、CAA 分类脱敏、低流量和缺口的告警 unknown、确认持久化、会话/CSRF/参数拒绝及前端筛选和诊断交互。
+
+真实浏览器与移动端、长期高负载、宿主磁盘耗尽/写盘卡顿、外部 Caddy 模块安装与网络拓扑、真实 ACME/Cloudflare 签发续期仍需专用环境验收。自动测试不构成这些环境的部署验收。外部通知、原始日志检索和应用 HTTP 健康检查不在本版范围。

@@ -106,3 +106,25 @@ it('serves detail by ID and keeps the published model for pending deletions',()=
  expect(mock.handle('POST','/services/home/check-upstream',{expected_hash:after.runtime.expected_hash,expected_deployment_id:after.runtime.deployment_id}).status).toBe(409)
  expect(mock.handle('GET','/services/missing').status).toBe(404)
 })
+
+it('keeps the anonymous guide on published data and hides it during an unresolved demo deployment',()=>{
+ const mock=createMockApi()
+ const before=mock.handle('GET','/portal').body as {services:{name:string;hostname:string;url:string}[]}
+ expect(before.services).toHaveLength(2)
+ expect(before.services[0]).toEqual(expect.objectContaining({url:expect.stringMatching(/^https:\/\//)}))
+ expect(Object.keys(before.services[0]).sort()).toEqual(['hostname','name','url'])
+ const draft=mock.handle('GET','/services').body as ServiceList
+ mock.handle('PUT',`/services/${draft.services[0].id}`,{revision:draft.revision,service:{...draft.services[0],name:'仅草稿名称'}})
+ expect(JSON.stringify(mock.handle('GET','/portal').body)).not.toContain('仅草稿名称')
+ mock.handle('POST','/auth/logout')
+ expect(mock.handle('GET','/portal').status).toBe(200)
+ expect(mock.handle('GET','/services').status).toBe(401)
+ mock.handle('POST','/auth/login',{username:'admin',password:'demo-password'})
+ const latest=mock.handle('GET','/services').body as ServiceList
+ const checked=mock.handle('POST','/draft/validate',{revision:latest.revision,rollback_id:''}).body as Preview
+ const release=mock.handle('POST','/deployments',{validation_id:checked.validation_id,revision:checked.revision,expected_hash:checked.runtime_hash}).body as Deployment
+ expect(release.status).toBe('applying')
+ expect(mock.handle('GET','/portal').status).toBe(503)
+ mock.handle('GET',`/deployments/${release.id}`);mock.handle('GET',`/deployments/${release.id}`)
+ expect(JSON.stringify(mock.handle('GET','/portal').body)).toContain('仅草稿名称')
+})

@@ -116,3 +116,13 @@ it('requires separate exposure confirmation when publishing an enabled internet 
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><Deployments/></QueryClientProvider>)
  fireEvent.click(await screen.findByText('校验配置'));await waitFor(()=>expect(screen.getByRole('button',{name:'确认发布'})).toBeEnabled());fireEvent.click(screen.getByRole('button',{name:'确认发布'}));expect(screen.getByRole('button',{name:'立即发布'})).toBeDisabled();fireEvent.click(screen.getByLabelText('我已核对域名与策略变更，确认放开访问范围。'));expect(screen.getByRole('button',{name:'立即发布'})).toBeEnabled()
 })
+
+it('previews all observation flag changes before publication',async()=>{
+ const active={domains:[],metrics_enabled:false,access_logs_enabled:false,alerts_enabled:false,upstream_checks_enabled:false}
+ const settings={...active,metrics_enabled:true,access_logs_enabled:true,alerts_enabled:true,upstream_checks_enabled:true}
+ const qc=new QueryClient({defaultOptions:{queries:{retry:false}}})
+ vi.mocked(api).mockImplementation(async path=>path.startsWith('/draft/preview')?{...preview,settings,active_settings:active,settings_changed:true}:{items:[]})
+ render(<QueryClientProvider client={qc}><Deployments/></QueryClientProvider>)
+ expect(await screen.findByText('业务指标与流量趋势')).toBeInTheDocument()
+ expect(screen.getByText('脱敏日志与签发线索')).toBeInTheDocument();expect(screen.getByText('站内告警')).toBeInTheDocument();expect(screen.getByText('后台 TCP 检查')).toBeInTheDocument()
+})

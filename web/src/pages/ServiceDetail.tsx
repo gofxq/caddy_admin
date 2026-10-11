@@ -1,3 +1,4 @@
+import {TrafficWorkspace} from '../components/TrafficWorkspace'
 import {useEffect,useRef,useState} from 'react'
 import {useMutation,useQuery} from '@tanstack/react-query'
 import {Link} from '@tanstack/react-router'
@@ -26,6 +27,7 @@ const checkLabels:Record<UpstreamCheck['status'],string>={reachable:'TCP 可连�
 export function ServiceDetail({id}:{id:string}){
  const query=useQuery({queryKey:['service-detail',id],queryFn:()=>api<Detail>(`/services/${encodeURIComponent(id)}`),refetchInterval:15000})
  const detail=query.data
+ const [showObservation,setShowObservation]=useState(false)
  const [checkResult,setCheckResult]=useState<{id:string;result:UpstreamCheck}|null>(null)
  const generation=useRef(0)
  const check=useMutation({
@@ -58,6 +60,7 @@ export function ServiceDetail({id}:{id:string}){
     <ErrorBox error={check.error} onRetry={runCheck} retryLabel="重试检查"/>
     {result?<div className="service-check-result" role="status"><Badge tone={result.status==='reachable'?'green':result.status==='unreachable'?'red':'amber'}>{checkLabels[result.status]}</Badge><p>{result.message}</p><small>目标：<code>{result.target}</code> · {result.duration_ms} ms · {date(result.checked_at)}</small></div>:<p className="muted">尚无当前版本的检查结果。</p>}
    </section>
+   <details className="card" onToggle={e=>setShowObservation(e.currentTarget.open)}><summary>运行统计与日志</summary>{showObservation&&<TrafficWorkspace serviceID={id} domainID={detail.published_domain?.id} allowServiceFilter={false}/>}</details>
    <section className="card" aria-label="最近相关发布">
     <div className="service-detail-card"><h2>最近相关发布</h2><p className="muted">最近 20 次发布中涉及此服务的记录，最多展示 5 条。</p></div>
     {detail.recent_deployments.length?<div className="table-wrap"><table><thead><tr><th>版本 / 时间</th><th>状态</th><th>操作</th></tr></thead><tbody>{detail.recent_deployments.map(release=><tr key={release.id}><td><strong>v{release.version}</strong>{release.rollback_id&&<Badge>回滚</Badge>}<small>{date(release.created)}</small></td><td><Status status={release.status}/></td><td><Link className="text-link" to="/deployments">查看发布记录</Link></td></tr>)}</tbody></table></div>:<Empty title="没有最近相关发布">新建草稿尚未发布，或此服务未在最近 20 次发布中变更。</Empty>}

@@ -19,6 +19,10 @@ const (
 )
 
 type CaddyConfig struct {
+	MetricsEnabled            bool
+	AccessLogsEnabled         bool
+	AlertsEnabled             bool
+	UpstreamChecksEnabled     bool
 	Socket                    string
 	AdminURL                  string
 	Domains                   []ManagedDomain
@@ -47,7 +51,14 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 	if err := ValidateUniqueServices(list); err != nil {
 		return nil, err
 	}
+	if (config.MetricsEnabled || config.AccessLogsEnabled || config.AlertsEnabled || config.UpstreamChecksEnabled) && (len(list) > 500 || len(config.Domains) > 64) {
+		return nil, Invalid("观测最多支持 500 个服务和 64 个域名")
+	}
 	routes := []any{}
+	observe := func(service Service) any {
+		return object{"handler": "admin_observe", "service_id": service.ID, "hostname": service.Hostname}
+	}
+	observed := config.MetricsEnabled || config.AccessLogsEnabled
 	deny := func(hosts []string) any {
 		return object{"match": []any{object{"host": hosts, "not": []any{object{"remote_ip": object{"ranges": config.LAN}}}}}, "handle": []any{object{"handler": "static_response", "status_code": 403, "body": "Access restricted to configured LAN/VPN networks"}}, "terminal": true}
 	}
@@ -73,7 +84,17 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 				}
 			}
 			if len(hosts) > 0 {
-				routes = append(routes, deny(hosts))
+				if observed {
+					for _, item := range list {
+						if item.Enabled && item.DomainID == d.ID {
+							route := deny([]string{item.Hostname}).(object)
+							route["handle"] = append([]any{observe(item)}, route["handle"].([]any)...)
+							routes = append(routes, route)
+						}
+					}
+				} else {
+					routes = append(routes, deny(hosts))
+				}
 			}
 		}
 	}
@@ -113,7 +134,11 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		if service.Scheme == "https" {
 			proxy["transport"] = object{"protocol": "http", "tls": object{"server_name": service.Host}}
 		}
-		routes = append(routes, object{"match": []any{object{"host": []string{service.Hostname}}}, "handle": []any{proxy}, "terminal": true})
+		handlers := []any{proxy}
+		if observed {
+			handlers = append([]any{observe(service)}, handlers...)
+		}
+		routes = append(routes, object{"match": []any{object{"host": []string{service.Hostname}}}, "handle": handlers, "terminal": true})
 	}
 	routes = append(routes, object{"handle": []any{object{"handler": "static_response", "status_code": 404, "body": "Not found"}}, "terminal": true})
 	subjects := []string{}
@@ -160,6 +185,12 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 			"http": object{"http_port": httpPort, "https_port": httpsPort, "servers": object{"managed": object{"listen": []string{":" + config.HTTPSPort}, "routes": routes, "tls_connection_policies": tlsPolicies, "automatic_https": object{"disable_certificates": true}}}},
 			"tls":  object{"certificates": certificates, "automation": object{"policies": []any{object{"subjects": subjects, "issuers": []any{issuer}}}}},
 		},
+	}
+	if observed {
+		result["apps"].(object)["caddy_admin_observability"] = object{"metrics": config.MetricsEnabled, "access_logs": config.AccessLogsEnabled}
+		if config.AccessLogsEnabled {
+			result["logging"] = object{"logs": object{"default": object{"exclude": []string{"tls.obtain", "tls.issuance"}}, "admin_diagnostics": object{"include": []string{"tls.obtain", "tls.issuance"}, "encoder": object{"format": "admin_diagnostics"}}}}
+		}
 	}
 	if setupEntry {
 		location := "https://{http.request.host}"
