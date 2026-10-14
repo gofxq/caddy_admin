@@ -37,7 +37,11 @@ export function SetupDNSGuidance({domain,address,onAddressChange,externalCaddy,a
   <input id="setup-address" placeholder="例如：192.168.2.6" value={address} onChange={event=>{onAddressChange(event.target.value);setCopyStatus('idle')}}/>
   <small className="muted">{externalCaddy?'填写外部 Caddy 的地址，不是 Manager 的地址。':'请填写访问设备能到达的 Caddy 地址。'}</small>
   {address.trim()&&!record&&<p className="text-danger">请填写可供其他设备访问的 IPv4 或 IPv6 地址，不含协议或端口。</p>}
-  <div className="dns-record"><span>{record?.type??'A / AAAA'}</span><code>{domain?name:'*.基础域名'}</code><code>{record?.address??'待填写 IP'}</code><span>仅 DNS（灰云）</span><button type="button" className="button button-ghost button-sm" disabled={!record||!domain} onClick={()=>void copy()}>复制 DNS 记录</button></div>
+  <details className="dns-record" open={!automatic}>
+   <summary>DNS 记录详情</summary>
+   <dl><div><dt>记录</dt><dd><span>{record?.type??'A / AAAA'}</span> <code>{domain?name:'*.基础域名'}</code></dd></div><div><dt>目标</dt><dd><code>{record?.address??'待填写 IP'}</code></dd></div><div><dt>代理</dt><dd>仅 DNS（灰云）</dd></div></dl>
+   <button type="button" className="button button-ghost button-sm" disabled={!record||!domain} onClick={()=>void copy()}>复制 DNS 记录</button>
+  </details>
   {copyStatus==='copied'&&<p className="muted" role="status">DNS 记录已复制</p>}
   {copyStatus==='failed'&&<p className="text-danger" role="alert">复制失败，请手动复制上方记录。</p>}
  </section>

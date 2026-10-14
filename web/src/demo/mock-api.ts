@@ -162,6 +162,11 @@ export type DemoState = {
 export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?:DemoState} = {}) {
   const staticDemo=options.staticDemo===true;
   let initialized=!options.setup,username="admin",tokenConfigured=false;
+  const setupDNSRecords=new Map<string,string>([['home.example.com','192.168.1.5'],['change.example.com','192.168.1.5']]);
+  const setupDNSPlan=(domain:string,address:string)=>{
+    const previous=setupDNSRecords.get(domain);
+    return {name:`*.${domain}`,type:address.includes(':')?'AAAA':'A',address,action:previous===address?'reuse':previous?'update':'create',...(previous?{old_address:previous,old_proxied:false}:{}),fingerprint:hash([domain,address,previous])};
+  };
   let portableSettings: ManagedSettings={origin:"https://caddyadmin.home.example.com",domains:[{id:"home",name:"home.example.com",access:"trusted"}],console_lan_only:false,admin_domain:"caddyadmin.home.example.com",lan_cidrs:["10.0.0.0/8"],upstream_cidrs:["10.0.0.0/8"],allowed_names:[],denied_ips:["10.0.0.2"],resolvers:["10.77.0.1"]};
   portableSettings={...portableSettings,metrics_enabled:false,access_logs_enabled:false,alerts_enabled:false,upstream_checks_enabled:false};
  let activeSettings=clone(portableSettings);
@@ -322,8 +327,14 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       if(method==='GET'&&path==='/setup/status')return ok({initialized,external_caddy:false,test_tls:false,resolver_suggestions:['1.1.1.1'],admin_password_status:'missing',cloudflare_token_status:'missing',setup_id:'static-demo'});
       if(method==='GET'&&path==='/setup/handoff')return ok({initialized,mode:'embedded',admin_origin:portableSettings.origin,manager_status:'ready',dns_status:'ready',console_status:'ready',temporary_entry:false,checked_at:now()});
       if(method==='POST'&&path==='/setup/preflight')return ok({normalized:{admin_domain:`caddyadmin.${domain}`,origin:`https://caddyadmin.${domain}`,admin_origin:`https://caddyadmin.${domain}`},network_valid:true,checks:[{id:'demo',status:'pass',message:'演示预检通过，未进行真实网络检查'}],can_complete:true,requires_acknowledgement:false,warning_fingerprint:''});
-      if(method==='POST'&&path==='/setup/dns/preview')return ok({name:`*.${input.domain}`,type:String(input.address).includes(':')?'AAAA':'A',address:input.address,action:'create',fingerprint:'static-demo-dns'});
-      if(method==='POST'&&path==='/setup/dns/confirm')return ok({confirmed:true});
+      if(method==='POST'&&path==='/setup/dns/preview')return ok(setupDNSPlan(String(input.domain),String(input.address)));
+      if(method==='POST'&&path==='/setup/dns/confirm'){
+        const cf=input.cloudflare as {address?:string;fingerprint?:string;confirmed?:boolean}|undefined;
+        if(!cf?.confirmed||!cf.address)return fail(422,'invalid','请明确确认 DNS 变更');
+        const plan=setupDNSPlan(domain,cf.address);
+        if(cf.fingerprint!==plan.fingerprint)return fail(409,'conflict','DNS 记录已变化，请重新预览并确认');
+        setupDNSRecords.set(domain,cf.address);return ok(plan);
+      }
       if(method==='POST'&&path==='/setup/complete'){
         portableSettings=clone(input.import_settings as ManagedSettings??{origin:`https://caddyadmin.${domain}`,admin_domain:`caddyadmin.${domain}`,domains:[{id:'home',name:domain,access:null}],console_lan_only:false,lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:settings?.resolvers??['1.1.1.1']});
         activeSettings=clone(portableSettings);draft=((input.services??[]) as Service[]).map(s=>({...s,id:randomUUID(),dial:'',updated_at:now()}));published=[];revision++;revisions.set(revision,clone(draft));

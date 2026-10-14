@@ -16,9 +16,9 @@ it('explains the impact of an unavailable request and offers retry',()=>{
  expect(retry).toHaveBeenCalledOnce()
 })
 
-it('tells a conflicted editor to refresh without suggesting a blind retry',()=>{
+it('tells a conflicted editor to reread state without discarding input or suggesting a blind retry',()=>{
  render(<ErrorBox error={new APIError(409,'conflict','草稿已被修改，请刷新')}/>)
  expect(screen.getByText(/其他操作已改变当前状态/)).toBeInTheDocument()
- expect(screen.getByText(/刷新页面并重新核对/)).toBeInTheDocument()
+ expect(screen.getByText(/重新读取最新状态并核对变更，保留需要的输入/)).toBeInTheDocument()
  expect(screen.queryByRole('button',{name:'重试'})).not.toBeInTheDocument()
 })

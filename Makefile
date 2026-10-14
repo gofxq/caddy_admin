@@ -1,4 +1,4 @@
-.PHONY: test build dev web static-web check integration container-test single-up validation-up validation-status validation-logs validation-down
+.PHONY: test build dev web web-demo static-web check integration container-test single-up validation-up validation-status validation-logs validation-down
 test:
 	go test -race ./cmd/... ./internal/...
 	cd deploy/caddy && go test -race ./observability
@@ -18,10 +18,13 @@ dev:
 	cd web && corepack pnpm dev
 web:
 	cd web && corepack pnpm dev --mode mock --port 5177 --strictPort
-static-web:
+web-demo: 
 	cd web && corepack pnpm install --frozen-lockfile
 	cd web && corepack pnpm build:demo
 	cd web && corepack pnpm preview:demo
+
+up:
+	docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 single-up:
 	docker compose up -d

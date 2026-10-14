@@ -347,8 +347,8 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 	}
 	automaticDNS := !service.externalCaddy() && !options.TestTLS
 	if automaticDNS {
-		if request.Cloudflare == nil || !request.Cloudflare.Confirmed || request.Cloudflare.Fingerprint == "" {
-			return "", domain.Invalid("请填写 Cloudflare Token、预览 DNS 记录并确认变更")
+		if request.Cloudflare == nil || request.Cloudflare.Fingerprint == "" {
+			return "", domain.Invalid("请填写 Cloudflare Token 并检查 DNS 记录")
 		}
 		if service.setupDNS == nil || service.setupIntent == nil || service.secrets == nil || service.bootstrapTLS == nil {
 			return "", domain.Invalid("初始化 DNS 或 secret 存储未配置")
@@ -406,16 +406,16 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		if previewErr != nil {
 			return "", previewErr
 		}
-		recovered := setupDNSRecovered(intent, plan, cf.Fingerprint)
+		recovered := cf.Confirmed && setupDNSRecovered(intent, plan, cf.Fingerprint)
 		if plan.Fingerprint != cf.Fingerprint && !recovered {
-			return "", domain.Conflict("DNS 记录已变化，请重新预览并确认")
+			return "", domain.Conflict("DNS 记录已变化，请重新检查，并按需确认变更")
 		}
 		if plan.Action != "reuse" {
-			return "", domain.Invalid("请先确认并写入 DNS 配置，解析生效后再完成初始化")
+			return "", domain.Invalid("DNS 记录需要新增或修改，请先预览并明确确认变更，解析生效后再完成初始化")
 		}
 		// The wizard checks propagation from the browser via DoH. Server-side
 		// resolution may filter private addresses; Cloudflare records and the
-		// confirmed change fingerprint remain authoritative for completion.
+		// checked or confirmed change fingerprint remain authoritative for completion.
 		if err = service.secrets.WriteCloudflareToken(cf.Token); err != nil {
 			return "", err
 		}

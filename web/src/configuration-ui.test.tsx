@@ -57,7 +57,7 @@ it('requires new credentials and DNS confirmation after importing in embedded mo
  expect(screen.getByLabelText('Caddy 访问 IP')).toHaveValue('192.168.2.6')
  expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
  fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}})
- fireEvent.click(screen.getByRole('button',{name:'预览 DNS 变更'}));fireEvent.click(await screen.findByRole('checkbox',{name:/确认.*DNS/}));fireEvent.click(screen.getByRole('button',{name:'确认配置'}));await screen.findByText(/DNS 配置已确认/);fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}));await screen.findByText('DNS 已配置，控制台域名与通配符一层子域均解析到目标 IP。')
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}));fireEvent.click(await screen.findByRole('checkbox',{name:/确认.*DNS/}));fireEvent.click(screen.getByRole('button',{name:'确认配置'}));await screen.findByText(/DNS 配置已确认/);fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}));await screen.findByText('DNS 已配置，控制台域名与通配符一层子域均解析到目标 IP。')
  fireEvent.click(screen.getByRole('button',{name:'下一步'}));await screen.findByRole('heading',{name:'确认配置'})
  expect(screen.getByRole('button',{name:'完成初始化'})).toBeDisabled()
  fireEvent.click(screen.getByRole('checkbox',{name:/确认导入配置/}));fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByText('初始化已完成')

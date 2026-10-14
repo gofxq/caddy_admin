@@ -10,6 +10,7 @@
 | `make integration` | 构建固定 Caddy，验证生成、加载、快照恢复和 Cloudflare secret-file |
 | `make container-test` | 临时容器中验证内置 HTTP 初始化与 HTTPS 切换、外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
 | `make web` | `127.0.0.1:5177` 演示界面，仅用于界面检查 |
+| `make web-demo` | 安装依赖并构建、预览纯静态 Demo（`127.0.0.1:5178`），仅用于界面检查 |
 
 Compose 配置检查：
 
@@ -25,6 +26,18 @@ docker compose -f compose.yaml -f compose.build.yaml -f compose.validation.yaml 
 Setup 自动测试覆盖浏览器 DoH 查询、地址族与通配符、超时与格式错误、无凭据请求、配置/查询状态解耦、连接重试、警告确认指纹与 Cloudflare 记录冲突。DoH 服务的 CORS/CSP、HTTP/HTTPS 实际浏览器访问、真实 DNS 传播和证书签发仍需在专用测试环境验收。
 
 行为变更覆盖主路径、边界、冲突、异常和权限；发布/恢复变更另覆盖断联、崩溃核对及数据保留。测试不用真实 Token、生产数据库或生产 Caddy；`TEST_TLS=true` 仅供隔离夹具，测试 CA 不代表公网信任。
+
+## 服务配置交互回归（2026-10-14）
+
+本轮八项改进记录在 [变更记录](../CHANGELOG.md)，操作方式见[服务与发布](usage.md#服务与发布)。
+
+- `web/src/service-workflow.test.tsx` 覆盖单域名固定后缀、多域名切换与已有服务编辑、一层子域及控制台保留域名拒绝；URL 粘贴拆分、IPv6、显式默认端口与自定义端口保留、敏感 URL 拒绝；UTF-8 字节边界、保存与启停反馈、读取失败与加载中门禁、未保存关闭/导航/刷新提醒，以及 503、修订冲突、并发删除和域名变更时保留输入。
+- `web/src/onboarding.test.tsx` 覆盖首个服务创建与上线引导；仅发布设置不结束引导的回归在 `service-workflow.test.tsx`。
+- `internal/application/settings_integration_test.go` 的 `TestFirstServiceCanUseUnpublishedUpstreamPolicy` 使用临时 SQLite 与 Caddy 端口替身，验证上游许可草稿与首个服务统一发布、保存不改变线上状态、拒绝受保护目标及保留访问范围确认。
+
+本轮 `make test`（根模块 Go race、Caddy 观测模块 race、前端 189 项）、`make check` 与 `make build` 均通过。受限环境使用可写构建缓存、短路径临时目录和允许本地测试监听端口的执行环境。构建仍有前端单包超过 500 kB 的体积提示。
+
+Vitest 使用 DOM 模拟环境。真实浏览器中的原生离开确认、移动端布局、真实 Caddy 配置加载与目标网络访问仍按下方环境验收要求处理；应用层端口替身测试不能代替真实部署验收。
 
 ## 从零手工测试
 

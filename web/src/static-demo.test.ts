@@ -32,8 +32,10 @@ describe('static demo',()=>{
  it('completes initialization and DNS locally, leaving new services as drafts',()=>{
   const demo=createMockApi({staticDemo:true,setup:true})
   expect(demo.handle('GET','/setup/status').body).toMatchObject({initialized:false})
-  expect(demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body).toMatchObject({name:'*.demo.example.com',address:'192.168.1.5'})
-  expect(demo.handle('POST','/setup/dns/confirm',{}).status).toBe(200)
+  const plan=demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body as {fingerprint:string}
+  expect(plan).toMatchObject({name:'*.demo.example.com',address:'192.168.1.5',action:'create'})
+  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},cloudflare:{address:'192.168.1.5',fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(200)
+  expect(demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
   expect(demo.handle('POST','/setup/preflight',{settings:{domain:'demo.example.com',resolvers:['1.1.1.1']}}).body).toMatchObject({can_complete:true,requires_acknowledgement:false})
   expect(demo.handle('POST','/setup/complete',{username:'visitor',password:'never-store-password',token:'never-store-token',settings:{domain:'demo.example.com',resolvers:['1.1.1.1']}}).status).toBe(200)
   expect(demo.handle('GET','/setup/handoff').body).toMatchObject({initialized:true,console_status:'ready',dns_status:'ready'})
@@ -41,6 +43,14 @@ describe('static demo',()=>{
   expect(demo.handle('GET','/auth/session').body).toMatchObject({username:'visitor'})
   expect(demo.handle('GET','/certificates').body).toMatchObject({items:[{subject:'*.demo.example.com'}]})
   expect(demo.handle('GET','/audit').body).toMatchObject({items:[{actor:'visitor',action:'setup.complete'}]})
+ })
+ it('reuses default setup DNS and rejects an unconfirmed change in the simulator',()=>{
+  const demo=createMockApi({staticDemo:true,setup:true})
+  expect(demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
+  const plan=demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.8'}).body as {fingerprint:string}
+  expect(plan).toMatchObject({action:'update',old_address:'192.168.1.5'})
+  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'home.example.com'},cloudflare:{address:'192.168.1.8',fingerprint:plan.fingerprint,confirmed:false}}).status).toBe(422)
+  expect(demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
  })
  it('finishes certificate activation and exposes domain DNS operations',()=>{
   const demo=createMockApi({staticDemo:true})

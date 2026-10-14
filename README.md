@@ -35,7 +35,7 @@ docker compose up -d
 
 可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；Setup 只确认使用，不回显。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
 
-首次登录后在设置中配置域名访问范围和上游许可，再添加服务、预览、校验与确认发布。控制台 LAN/VPN 限制为登录后的可选项。
+首次登录后在设置中配置域名访问范围并保存上游许可草稿，再添加服务，统一预览、校验与确认发布。控制台 LAN/VPN 限制为登录后的可选项。
 
 ## 可选观测与排障
 
@@ -43,7 +43,7 @@ docker compose up -d
 
 ## 功能演示
 
-想先体验功能，可运行 `make static-web`，打开 `http://127.0.0.1:5178`。这是无需后端的纯静态演示，配置、DNS、证书和发布均在浏览器中模拟成功；也可部署到 Vercel，详见[静态 Demo](docs/demo.md)。
+想先体验功能，可运行 `make web-demo`，打开 `http://127.0.0.1:5178`。这是无需后端的纯静态演示，配置、DNS、证书和发布均在浏览器中模拟成功；也可部署到 Vercel，详见[静态 Demo](docs/demo.md)。
 
 ## 技术栈
 
@@ -54,6 +54,7 @@ docker compose up -d
 
 ## 文档
 
+- [初始化流程](docs/setup.md)：三步 Setup、DNS 确认、重启交接与失败重试。
 - [使用指南](docs/usage.md) · [完整流程与汇总图](docs/product-user-flow-review.md)：服务管理、发布、回滚和配置导入导出。
 - [部署与维护](docs/operations.md)：DNS、完整配置、源码构建、外部 Caddy、升级与备份。
 - [从零测试](docs/testing.md) · [验证边界](docs/verification.md) · [API](docs/api.md)。

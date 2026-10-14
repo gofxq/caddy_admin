@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
+import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react'
 import {Setup} from './pages/Setup'
 
 beforeEach(()=>vi.stubGlobal('location',new URL('https://192.168.2.6/setup')))
@@ -10,12 +10,12 @@ function wireDNS(path:string,address='192.168.2.6'){
  const url=new URL(path),type=url.searchParams.get('type')==='AAAA'?28:1,name=url.searchParams.get('name')
  return reply({Status:0,Question:[{name,type}],Answer:type===1?[{name,type,data:address}]:[]})
 }
-function installAPI({automatic=false,complete=()=>reply({admin_origin:'https://caddyadmin.h.cmx.ee'},202),warning=()=>''}:{automatic?:boolean;complete?:()=>Response;warning?:()=>string}={}){
+function installAPI({automatic=false,action='create',complete=()=>reply({admin_origin:'https://caddyadmin.h.cmx.ee'},202),warning=()=>''}:{automatic?:boolean;action?:'create'|'update'|'reuse';complete?:()=>Response;warning?:()=>string}={}){
  const fetch=vi.fn().mockImplementation(async(path:string)=>{
   if(path.startsWith('https://'))return wireDNS(path)
   if(path.endsWith('/status'))return reply({initialized:false,test_tls:!automatic,client_ip:'192.168.2.9'})
   if(path.endsWith('/preflight'))return reply(preflight(warning()))
-  if(path.endsWith('/dns/preview')||path.endsWith('/dns/confirm'))return reply({name:'*.h.cmx.ee',type:'A',address:'192.168.2.6',action:'create',fingerprint:'plan'})
+  if(path.endsWith('/dns/preview')||path.endsWith('/dns/confirm'))return reply({name:'*.h.cmx.ee',type:'A',address:'192.168.2.6',action,fingerprint:'plan'})
   if(path.endsWith('/complete'))return complete()
   throw new Error(`Unexpected request ${path}`)
  })
@@ -23,6 +23,48 @@ function installAPI({automatic=false,complete=()=>reply({admin_origin:'https://c
  return fetch
 }
 async function reachDNS(){fireEvent.change(await screen.findByLabelText('管理员密码'),{target:{value:'a-secure-password'}});fireEvent.click(screen.getByRole('button',{name:'下一步'}));fireEvent.change(screen.getByLabelText('首个通配符域名'),{target:{value:'h.cmx.ee'}});await screen.findByRole('heading',{name:'首个域名与 DNS'})}
+
+it('continues with existing DNS after checking without showing change confirmation or writing DNS',async()=>{
+ const fetch=installAPI({automatic:true,action:'reuse'});render(<Setup pollLogin={false}/>);await reachDNS()
+ expect(screen.queryByRole('group',{name:'DNS 演示场景'})).not.toBeInTheDocument()
+ expect(screen.queryByRole('button',{name:'预览 DNS 变更'})).not.toBeInTheDocument()
+ expect(screen.queryByRole('button',{name:'确认配置'})).not.toBeInTheDocument()
+ expect(screen.getByRole('button',{name:'检查 DNS'})).toBeDisabled()
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ expect(screen.queryByRole('checkbox',{name:/确认.*DNS/})).not.toBeInTheDocument()
+ expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/confirm'))).toBe(false)
+ fireEvent.click(screen.getByRole('button',{name:'下一步'}));await screen.findByRole('heading',{name:'确认配置'})
+ fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByRole('heading',{name:'初始化已完成'})
+ const request=fetch.mock.calls.find(([p])=>p.endsWith('/complete'))!
+ expect(JSON.parse(request[1].body).cloudflare).toMatchObject({fingerprint:'plan',confirmed:false})
+})
+
+it('blocks reuse when Token validation fails and keeps the inputs for retry',async()=>{
+ const fetch=installAPI({automatic:true,action:'reuse'}),original=fetch.getMockImplementation()!
+ fetch.mockImplementation(async(path:string)=>path.endsWith('/dns/preview')?reply({error:{message:'Token 无法访问对应 Cloudflare Zone'}},422):original(path))
+ render(<Setup pollLogin={false}/>);await reachDNS()
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+ expect(await screen.findByRole('alert')).toHaveTextContent('Token 无法访问')
+ expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
+ expect(screen.getByLabelText('Cloudflare API Token')).toHaveValue('secret-token')
+ expect(fetch.mock.calls.some(([p])=>p.startsWith('https://')||p.endsWith('/dns/confirm'))).toBe(false)
+})
+
+it('invalidates checked reuse when the domain, IP or Token changes',async()=>{
+ installAPI({automatic:true,action:'reuse'});render(<Setup pollLogin={false}/>);await reachDNS()
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ for(const [label,value] of [['Caddy 访问 IP','192.168.2.8'],['首个通配符域名','new.example.com'],['Cloudflare API Token','new-token']]){
+  fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+  fireEvent.change(screen.getByLabelText(label),{target:{value}})
+  expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
+  expect(screen.queryByRole('table',{name:'DNS 查询结果'})).not.toBeInTheDocument()
+  if(label==='Caddy 访问 IP')fireEvent.change(screen.getByLabelText(label),{target:{value:'192.168.2.6'}})
+ }
+})
 
 it('retries an initial connection failure without claiming setup is restarting',async()=>{
  const fetch=vi.fn().mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(reply({initialized:false,test_tls:true,client_ip:'192.168.2.9'}))
@@ -50,12 +92,13 @@ it('switches DoH without clearing the configured DNS or changing server resolver
  const fetch=installAPI({automatic:true});render(<Setup pollLogin={false}/>);await reachDNS()
  expect(screen.getByText(/请填写或确认使用 Cloudflare Token/)).toBeInTheDocument()
  fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
- fireEvent.click(screen.getByRole('button',{name:'预览 DNS 变更'}))
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
  fireEvent.click(await screen.findByRole('checkbox',{name:/确认.*DNS/}))
  fireEvent.click(screen.getByRole('button',{name:'确认配置'}))
  await screen.findByText(/DNS 配置已确认/)
  fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
  await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ fireEvent.click(screen.getByText('查询选项'))
  fireEvent.click(screen.getByRole('button',{name:'Google DoH'}))
  expect(screen.getByText(/DNS 配置已确认/)).toBeInTheDocument()
  expect(screen.getByRole('checkbox',{name:/确认.*DNS/})).toBeChecked()
@@ -66,6 +109,19 @@ it('switches DoH without clearing the configured DNS or changing server resolver
  expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/check'))).toBe(false)
  expect(screen.getByLabelText('DNS 解析器（逗号分隔）')).toHaveValue('1.1.1.1')
  for(const [path,options] of fetch.mock.calls.filter(([p])=>p.startsWith('https://'))){expect(path).not.toContain('secret-token');expect(options?.body).toBeUndefined()}
+})
+
+it('keeps query options folded while the default DNS check remains available',async()=>{
+ installAPI();render(<Setup pollLogin={false}/>);await reachDNS()
+ const options=screen.getByText('查询选项').closest('details')!
+ expect(options).not.toHaveAttribute('open')
+ expect(within(options).getByRole('button',{name:'Google DoH'})).not.toBeVisible()
+ expect(screen.getByRole('button',{name:'检查 DNS'})).toBeEnabled()
+ fireEvent.click(screen.getByText('查询选项'))
+ expect(within(options).getByRole('button',{name:'Cloudflare DoH'})).toHaveAttribute('aria-pressed','true')
+ fireEvent.click(within(options).getByRole('button',{name:'Google DoH'}))
+ expect(screen.getByLabelText('首个通配符域名')).toHaveValue('h.cmx.ee')
+ expect(screen.getByLabelText('Caddy 访问 IP')).toHaveValue('192.168.2.6')
 })
 
 it('submits without a duplicate browser preflight and requires fresh consent after a warning changes',async()=>{

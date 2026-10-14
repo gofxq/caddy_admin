@@ -24,7 +24,7 @@ const overview={reachable:true,drift:false,runtime_hash:'same',expected_hash:'sa
 const settings={config:{origin:location.origin,domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'},external_caddy:false}
 
 it('guides a new administrator from creating a service to the first publication',async()=>{
- vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:overview)
+ vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:path==='/services'?{revision:0,services:[],published:[]}:overview)
  const router=renderPage('/',Overview)
  expect(await screen.findByRole('heading',{name:'首次运行任务中心'})).toBeInTheDocument()
  expect(screen.getByText('创建服务草稿',{selector:'strong'})).toBeInTheDocument()
@@ -33,10 +33,10 @@ it('guides a new administrator from creating a service to the first publication'
 })
 
 it('moves the first-run guide to preview after a draft is saved and hides it after publication',async()=>{
- vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:{...overview,unpublished:true,draft_revision:1})
+ vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:path==='/services'?{revision:1,services:[{id:'photos'}],published:[]}:{...overview,unpublished:true,draft_revision:1})
  const first=renderPage('/',Overview)
- expect(await screen.findByText('完成首次成功发布')).toBeInTheDocument()
- expect(screen.getByText('已有未发布服务草稿')).toBeInTheDocument()
+ expect(await screen.findByText('完成首个服务上线')).toBeInTheDocument()
+ expect(await screen.findByText('已有服务配置')).toBeInTheDocument()
  cleanup()
  vi.mocked(api).mockReset().mockImplementation(async path=>path==='/settings'?settings:{...overview,version:1,enabled:1})
  renderPage('/',Overview)
@@ -56,7 +56,7 @@ it('allows pending access domains to save drafts without a forced group',async()
  vi.mocked(api).mockImplementation(async path=>path==='/services'?{revision:0,services:[],published:[]}:{config:{domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,upstream_cidrs:[],allowed_names:[]}})
  renderPage('/services',Services)
  fireEvent.click(await screen.findByRole('button',{name:'添加第一个服务'}))
- expect(screen.getByRole('option',{name:/home.example.com · 待配置/})).toBeEnabled()
+ expect(screen.getByText('home.example.com · 待配置')).toBeInTheDocument()
  expect(screen.getByText(/待配置访问范围也可保存草稿/)).toBeInTheDocument()
 })
 

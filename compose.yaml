@@ -28,3 +28,4 @@ services: # 内置模式：docker compose up -d，然后打开 http://服务器I
 networks:
   default:
     name: caddy-admin # 可选：固定网络名；不设置时使用目录名。
+    external: true

@@ -115,13 +115,14 @@ func TestCompleteSetupRequiresWarningAcknowledgement(t *testing.T) {
 }
 
 type setupDNSStub struct {
-	plan       SetupDNSPlan
-	calls      int
-	applyError error
+	plan         SetupDNSPlan
+	calls        int
+	applyError   error
+	previewError error
 }
 
 func (d *setupDNSStub) Preview(context.Context, string, string, string) (SetupDNSPlan, error) {
-	return d.plan, nil
+	return d.plan, d.previewError
 }
 func (d *setupDNSStub) Apply(context.Context, string, SetupDNSPlan) error {
 	d.calls++
@@ -165,6 +166,44 @@ func TestSetupDNSRequiresConfirmationBeforeRemoteOrLocalWrites(t *testing.T) {
 	}
 	if dns.calls != 1 || !secrets.written || !repo.completed || !snapshot.written {
 		t.Fatal("missing setup writes")
+	}
+}
+
+func TestSetupReusesCheckedDNSWithoutChangeConfirmation(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		action       string
+		fingerprint  string
+		previewError error
+		priorIntent  bool
+		wantSuccess  bool
+	}{
+		{name: "matching existing record", action: "reuse", fingerprint: "checked", wantSuccess: true},
+		{name: "record changed after check", action: "reuse", fingerprint: "changed"},
+		{name: "unconfirmed reuse cannot recover a previous write", action: "reuse", fingerprint: "after", priorIntent: true},
+		{name: "record now needs creation", action: "create", fingerprint: "checked"},
+		{name: "record now needs update", action: "update", fingerprint: "checked"},
+		{name: "token rejected", action: "reuse", fingerprint: "checked", previewError: domain.Invalid("Token 无法访问对应 Cloudflare Zone")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dns := &setupDNSStub{plan: SetupDNSPlan{Name: "*.home.example.com", Address: "10.0.0.6", Type: "A", Action: tt.action, Fingerprint: tt.fingerprint}, previewError: tt.previewError}
+			repo, secrets, snapshot := &setupRepository{}, &setupSecret{}, &setupSnapshot{}
+			intent := &setupIntentMemory{}
+			if tt.priorIntent {
+				intent.intent.Plan = dns.plan
+				intent.intent.Plan.Fingerprint = "checked"
+				intent.intent.Plan.Action = "create"
+			}
+			svc := New(Options{ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{SetupDNS: dns, SetupIntent: intent, Secrets: secrets, Snapshot: snapshot, BootstrapCertificate: &setupBootstrap{}, SetupProbe: setupProbe{resolver: true, dns: true}})
+			req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), Cloudflare: &SetupCloudflare{Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Address: "10.0.0.6", Fingerprint: "checked"}}
+			_, err := svc.CompleteSetup(context.Background(), req)
+			if (err == nil) != tt.wantSuccess || repo.completed != tt.wantSuccess || secrets.written != tt.wantSuccess || snapshot.written != tt.wantSuccess {
+				t.Fatalf("success=%v, err=%v, completed=%v, secret=%v, snapshot=%v", tt.wantSuccess, err, repo.completed, secrets.written, snapshot.written)
+			}
+			if dns.calls != 0 {
+				t.Fatal("completion must never apply DNS changes")
+			}
+		})
 	}
 }
 func TestSetupDNSRejectsInvalidCredentialsBeforeRemoteWrites(t *testing.T) {

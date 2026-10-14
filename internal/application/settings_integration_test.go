@@ -304,3 +304,55 @@ func TestNewDomainCanIssueCertificateBeforeBusinessPublication(t *testing.T) {
 		t.Fatal("ready business service missing")
 	}
 }
+
+func TestFirstServiceCanUseUnpublishedUpstreamPolicy(t *testing.T) {
+	s, store, caddy, snapshot, settings := policyFixture(t)
+	ctx := context.Background()
+	originalRuntime := string(caddy.raw)
+	draft, err := store.Draft(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Domains[0].Access = domain.DomainAccess("trusted")
+	settings.LAN = []string{"10.0.0.0/8"}
+	settings.UpstreamCIDRs = []string{"10.0.0.0/8"}
+	if _, err = s.SaveSettings(ctx, draft.Revision, settings, false, "admin", "10.0.0.6"); err == nil {
+		t.Fatal("trusted-network widening accepted without confirmation")
+	}
+	draft, err = s.SaveSettings(ctx, draft.Revision, settings, true, "admin", "10.0.0.6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := domain.Service{Name: "照片库", DomainID: "home", Hostname: "photos.example.com", Scheme: "http", Host: "10.2.3.4", Port: 2283, Enabled: true}
+	blocked := value
+	blocked.Host = "127.0.0.1"
+	if _, err = s.SaveService(ctx, draft.Revision, blocked, false, "admin"); err == nil {
+		t.Fatal("draft permission bypassed protected target checks")
+	}
+	draft, err = s.SaveService(ctx, draft.Revision, value, false, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.ManagedSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active.UpstreamCIDRs) != 0 || string(caddy.raw) != originalRuntime || string(snapshot.raw) != originalRuntime {
+		t.Fatal("saving settings and service drafts changed active policy or routes")
+	}
+	publishPolicy(t, s, draft.Revision, "first-service-with-policy", "10.0.0.6", true)
+	active, err = store.ManagedSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active.UpstreamCIDRs) != 1 || !strings.Contains(string(caddy.raw), "photos.example.com") || string(caddy.raw) != string(snapshot.raw) {
+		t.Fatal("policy and first service did not publish together")
+	}
+	history, err := store.Deployments(ctx, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].Status != "success" {
+		t.Fatalf("expected one successful combined publication, got %#v", history)
+	}
+}
