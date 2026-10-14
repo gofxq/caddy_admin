@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/gofxq/caddy_admin/internal/domain"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -25,16 +26,34 @@ func TestSetupPreconfiguredCredentialsExposeOnlyStatus(t *testing.T) {
 	}
 }
 
-func TestOrdinarySetupDoesNotCreateNetworkOrDomainAccessPolicy(t *testing.T) {
+func TestOrdinarySetupDefaultsToOpenAccessPolicy(t *testing.T) {
 	settings, err := ManagedSettingsForSetup(SetupSettings{Domain: "*.Example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.ConsoleLANOnly || len(settings.LAN) != 0 || len(settings.UpstreamCIDRs) != 0 {
-		t.Fatal("setup silently added network policy")
+	allNetworks := []string{"0.0.0.0/0", "::/0"}
+	if settings.ConsoleLANOnly || !reflect.DeepEqual(settings.LAN, allNetworks) || !reflect.DeepEqual(settings.UpstreamCIDRs, allNetworks) || !reflect.DeepEqual(settings.AllowedNames, []string{"*"}) || len(settings.DeniedIPs) != 0 {
+		t.Fatalf("wrong default policy: %+v", settings)
 	}
-	if len(settings.Domains) != 1 || settings.Domains[0].Access != nil || settings.Domains[0].Name != "example.com" {
+	if len(settings.Domains) != 1 || settings.Domains[0].Access == nil || *settings.Domains[0].Access != "internet" || settings.Domains[0].Name != "example.com" {
 		t.Fatalf("wrong domain: %#v", settings.Domains)
+	}
+}
+
+func TestSetupImportPreservesExplicitEmptyAndRestrictedPolicies(t *testing.T) {
+	for _, restricted := range []bool{false, true} {
+		imported := domain.ManagedSettings{Origin: "https://caddyadmin.example.com", AdminDomain: "caddyadmin.example.com", Domains: []domain.ManagedDomain{{ID: "custom", Name: "example.com"}}, LAN: []string{}, UpstreamCIDRs: []string{}, AllowedNames: []string{}, DeniedIPs: []string{}, Resolvers: []string{"9.9.9.9"}}
+		if restricted {
+			imported.Domains[0].Access = domain.DomainAccess("trusted")
+			imported.ConsoleLANOnly = true
+			imported.LAN = []string{"10.0.0.0/8"}
+			imported.UpstreamCIDRs = []string{"10.1.0.0/16"}
+			imported.AllowedNames = []string{"photos.internal"}
+		}
+		settings, err := ManagedSettingsForSetup(SetupSettings{Domain: "example.com", ImportSettings: &imported})
+		if err != nil || !reflect.DeepEqual(settings, imported) {
+			t.Fatalf("import policy replaced: %+v, %v", settings, err)
+		}
 	}
 }
 

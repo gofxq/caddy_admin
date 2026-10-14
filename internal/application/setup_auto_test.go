@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,7 +59,8 @@ func TestAutomaticSetupReusesDNSAndSavesOnlyConsole(t *testing.T) {
 	if p.Status != "saved" || p.Stage != "restarting" || r.count.Load() != 1 || dns.calls != 0 || restarts.Load() != 1 {
 		t.Fatal(p, r.count.Load(), dns.calls, restarts.Load())
 	}
-	if r.credentials.Username != "admin" || r.credentials.Password != s.options.SetupPassword || r.settings.ConsoleLANOnly || len(r.settings.UpstreamCIDRs) != 0 || r.settings.Domains[0].Access != nil || !strings.Contains(string(snapshot.raw), "caddyadmin.home.example.com") {
+	want, err := ManagedSettingsForSetup(SetupSettings{Domain: "home.example.com"})
+	if err != nil || r.credentials.Username != "admin" || r.credentials.Password != s.options.SetupPassword || !reflect.DeepEqual(r.settings, want) || !strings.Contains(string(snapshot.raw), "caddyadmin.home.example.com") || strings.Contains(string(snapshot.raw), "remote_ip") {
 		t.Fatal("wrong initial state")
 	}
 	awaitAuto(t, s, func() { restarts.Add(1) })

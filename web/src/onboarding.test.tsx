@@ -65,3 +65,20 @@ it('links an empty deployment preview back to service editing',async()=>{
  renderPage('/deployments',Deployments)
  expect(await screen.findByRole('link',{name:'前往服务'})).toHaveAttribute('href','/services')
 })
+
+it('lets open-policy instances go directly to services without a settings prerequisite',async()=>{
+ const opened={...settings,config:{...settings.config,domains:[{id:'home',name:'home.example.com',access:'internet'}],lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*']}}
+ vi.mocked(api).mockImplementation(async path=>path==='/settings'?opened:path==='/services'?{revision:0,services:[],published:[]}:overview)
+ renderPage('/',Overview)
+ await screen.findByRole('heading',{name:'首次运行任务中心'})
+ expect(screen.queryAllByRole('link',{name:'前往处理'}).filter(link=>link.getAttribute('href')==='/settings')).toHaveLength(1)
+ expect(screen.getByText('业务域名访问范围已配置')).toBeInTheDocument()
+ expect(screen.getByText('上游许可草稿已配置')).toBeInTheDocument()
+})
+
+it('does not mark upstream policy ready when only service names are allowed',async()=>{
+ vi.mocked(api).mockImplementation(async path=>path==='/settings'?{...settings,config:{...settings.config,allowed_names:['*']}}:path==='/services'?{revision:0,services:[],published:[]}:overview)
+ renderPage('/',Overview)
+ const task=(await screen.findByText('配置上游许可草稿',{selector:'strong'})).closest('li')!
+ expect(task).toHaveClass('active')
+})

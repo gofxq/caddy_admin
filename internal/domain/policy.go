@@ -122,7 +122,7 @@ func ValidateManagedNetwork(settings ManagedSettings) error {
 		}
 	}
 	for _, name := range settings.AllowedNames {
-		if !ValidDomain(name) {
+		if name != "*" && !ValidDomain(name) {
 			return fmt.Errorf("invalid allowed upstream name")
 		}
 	}
@@ -173,7 +173,7 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 	} else {
 		allowed := false
 		for _, name := range policy.AllowedNames {
-			if name == service.Host {
+			if name == "*" || name == service.Host {
 				allowed = true
 				break
 			}
@@ -213,7 +213,7 @@ func ValidateUniqueServices(services []Service) error {
 }
 
 func allowedIP(policy TargetPolicy, address netip.Addr) bool {
-	if !address.IsValid() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
+	if !address.IsGlobalUnicast() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() || address.IsMulticast() || address.IsUnspecified() {
 		return false
 	}
 	for _, value := range []string{"169.254.0.0/16", "100.100.100.200/32", "fd00:ec2::254/128"} {

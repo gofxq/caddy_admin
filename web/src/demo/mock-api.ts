@@ -338,8 +338,8 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
         setupDNSRecords.set(domain,cf.address);return ok(plan);
       }
       if(method==='POST'&&path==='/setup/complete'){
-        portableSettings=clone(input.import_settings as ManagedSettings??{origin:`https://caddyadmin.${domain}`,admin_domain:`caddyadmin.${domain}`,domains:[{id:'home',name:domain,access:null}],console_lan_only:false,lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:settings?.resolvers??['1.1.1.1']});
-        activeSettings=clone(portableSettings);draft=((input.services??[]) as Service[]).map(s=>({...s,id:randomUUID(),dial:'',updated_at:now()}));published=[];revision++;revisions.set(revision,clone(draft));
+        portableSettings=clone(input.import_settings as ManagedSettings??{origin:`https://caddyadmin.${domain}`,admin_domain:`caddyadmin.${domain}`,domains:[{id:'home',name:domain,access:'internet'}],console_lan_only:false,lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*'],denied_ips:[],resolvers:settings?.resolvers??['1.1.1.1']});
+        activeSettings={...clone(portableSettings),console_lan_only:false,domains:clone(portableSettings.domains.filter(d=>portableSettings.admin_domain===`caddyadmin.${d.name}`))};draft=((input.services??[]) as Service[]).map(s=>({...s,id:randomUUID(),dial:'',updated_at:now()}));published=[];revision++;revisions.set(revision,clone(draft));
         initialized=true;authenticated=true;username=String(input.username??'admin');tokenConfigured=true;
         record('setup.complete','demo');return ok({admin_origin:portableSettings.origin});
       }

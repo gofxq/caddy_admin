@@ -3,6 +3,7 @@ package gormstore
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -37,6 +38,42 @@ func TestConfigurationExportContainsOnlyPortableBusinessData(t *testing.T) {
 	}
 	if config.Version != 2 || config.Format != "caddy-web-admin" || len(config.Services) != 1 || config.Settings.Domains[0].Name != "home.example" {
 		t.Fatalf("export = %#v", config)
+	}
+}
+
+func TestOpenDefaultConfigurationRoundTripPreservesPolicy(t *testing.T) {
+	ctx := context.Background()
+	settings, err := application.ManagedSettingsForSetup(application.SetupSettings{Domain: "home.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := testStore(t)
+	if err = store.CompleteSetup(ctx, application.SetupCredentials{Username: "admin", Password: "private-admin-password"}, settings, domain.CertificateStatus{Mode: domain.CertificateModeBootstrapInternal, ActivationStatus: "idle", PublicStatus: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := application.New(application.Options{RuntimePolicy: settings}, store, nil, application.Dependencies{})
+	exported, err := svc.ExportConfiguration(ctx)
+	if err != nil || !reflect.DeepEqual(exported.Settings, settings) {
+		t.Fatalf("export altered open policy: %+v %v", exported, err)
+	}
+	raw, err := json.Marshal(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded application.Configuration
+	if err = json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := application.ManagedSettingsForSetup(application.SetupSettings{Domain: "home.example", ImportSettings: &decoded.Settings})
+	if err != nil || !reflect.DeepEqual(imported, settings) {
+		t.Fatalf("setup round trip altered policy: %+v %v", imported, err)
+	}
+	if _, err = svc.ImportConfiguration(ctx, decoded, 0, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := store.Draft(ctx)
+	if err != nil || !reflect.DeepEqual(draft.Settings, settings) || len(draft.Services) != 0 {
+		t.Fatalf("import altered policy: %+v %v", draft, err)
 	}
 }
 

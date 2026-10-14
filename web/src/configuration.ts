@@ -15,6 +15,7 @@ export function parseConfiguration(raw:string):Configuration{
  const optional=['previous_admin_domain','previous_origin'].filter(k=>value.settings&&typeof value.settings==='object'&&k in value.settings)
  const settings=record(value.settings,[...strings,...arrays,'domains','console_lan_only',...optional,...booleans])
  if([...strings,...optional].some(k=>typeof settings[k]!=='string')||arrays.some(k=>!Array.isArray(settings[k])||(settings[k] as unknown[]).some(v=>typeof v!=='string')))throw invalid()
+ if((settings.allowed_names as string[]).some(name=>name!=='*'&&(name.length===0||name.length>253||name.split('.').some(label=>!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)))))throw invalid()
  if(booleans.some(k=>typeof settings[k]!=='boolean'))throw invalid()
  if(typeof settings.console_lan_only!=='boolean'||!Array.isArray(settings.domains))throw invalid()
  for(const item of settings.domains){const d=record(item,['id','name','access']);if(typeof d.id!=='string'||typeof d.name!=='string'||!(d.access===null||d.access==='trusted'||d.access==='internet'))throw invalid()}

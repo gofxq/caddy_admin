@@ -27,10 +27,12 @@ def mounts(name):
         volume=prefix+'-'+name+'-'+suffix;docker('volume','create',volume);volumes.append(volume);result+=['-v',volume+':'+target]
     return result
 
-def request(container,path,body=None,formal=False):
+def request(container,path,body=None,formal=False,session=False,csrf=None):
     host='caddyadmin.home.example.test' if formal else '127.0.0.1'
     url='https://'+host+path
     args=['exec',container,'curl','-H','Origin: https://'+host,'--noproxy','*','-sk','--max-time','5','-w','\n%{http_code}','--resolve',host+':443:127.0.0.1',url]
+    if session:args+=['-b','/tmp/setup-test.cookies','-c','/tmp/setup-test.cookies']
+    if csrf:args+=['-H','X-CSRF-Token: '+csrf]
     if body is not None:args+=['-H','Origin: https://'+host,'-H','Content-Type: application/json','--data',json.dumps(body)]
     response=docker(*args).stdout;payload,status=response.rsplit('\n',1)
     return int(status),json.loads(payload) if payload else None
@@ -54,11 +56,20 @@ try:
         return container
     instance=start('instance',entry,storage)
     eventually(lambda:docker('exec',instance,'manager','health',check=False).returncode==0 and request(instance,'/api/v1/setup/handoff')[1].get('initialized'))
-    status,login=request(instance,'/api/v1/auth/login',{'username':'operator','password':password},True);assert status==200,'automatic administrator missing'
+    status,login=request(instance,'/api/v1/auth/login',{'username':'operator','password':password},True,session=True);assert status==200,'automatic administrator missing'
     status,_=request(instance,'/api/v1/services',formal=True);assert status==401,'unauthenticated API accepted'
+    status,settings=request(instance,'/api/v1/settings',formal=True,session=True);assert status==200,'authenticated settings unavailable'
+    policy=settings['config']
+    assert policy['domains'][0]['access']=='internet' and not policy['console_lan_only'],'default source policy was restricted'
+    assert policy['lan_cidrs']==['0.0.0.0/0','::/0'] and policy['upstream_cidrs']==['0.0.0.0/0','::/0'] and policy['allowed_names']==['*'] and policy['denied_ips']==[],'default target policy was restricted'
+    status,draft=request(instance,'/api/v1/services',formal=True,session=True);assert status==200 and draft['services']==[] and draft['published']==[],'initial service list was not empty'
+    sample={'name':'Isolated named upstream','domain_id':policy['domains'][0]['id'],'hostname':'sample.home.example.test','scheme':'https','host':fixture,'port':443,'enabled':True,'notes':'Test fixture only'}
+    status,_=request(instance,'/api/v1/services',{'revision':draft['revision'],'service':sample},True,session=True);assert status==403,'service mutation bypassed CSRF'
+    status,_=request(instance,'/api/v1/services',{'revision':draft['revision'],'service':sample},True,session=True,csrf=login['csrf']);assert status==200,'open policy rejected named fixture upstream'
     status,public=request(instance,'/api/v1/setup/handoff');assert status==200 and public['initialized'] and public['console_status']!='ready','test certificate reported public trust'
     snapshot=docker('exec',instance,'cat','/srv/snapshots/active.json').stdout
     assert token not in snapshot and password not in snapshot,'secret leaked into startup snapshot'
+    assert sample['hostname'] not in snapshot,'saving the first service draft published a business route'
     saved_token=docker('exec',instance,'cat','/var/lib/manager/secrets/cloudflare_token').stdout
     assert saved_token.strip()==token,'token not persisted'
     docker('restart','-t','20',instance)

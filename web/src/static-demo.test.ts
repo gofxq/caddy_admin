@@ -113,3 +113,25 @@ describe('static demo',()=>{
   expect(demo.handle('GET','/audit').body).toMatchObject({items:[{actor:'visitor',action:'setup.complete'}]})
  })
 })
+
+it('initializes with open defaults but preserves an explicitly imported policy',()=>{
+ const demo=createMockApi({staticDemo:true,setup:true})
+ demo.handle('POST','/setup/complete',{settings:{domain:'demo.example.com'}})
+ const s=demo.handle('GET','/settings').body as Settings
+ expect(s.config).toMatchObject({domains:[{id:'home',name:'demo.example.com',access:'internet'}],console_lan_only:false,lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*'],denied_ips:[]})
+ const {test_tls:_,...imported}=s.config
+ imported.domains[0].access=null;imported.lan_cidrs=[];imported.upstream_cidrs=[];imported.allowed_names=[]
+ const other=createMockApi({staticDemo:true,setup:true})
+ other.handle('POST','/setup/complete',{settings:{domain:'demo.example.com'},import_settings:imported})
+ expect((other.handle('GET','/settings').body as Settings).config).toMatchObject(imported)
+})
+
+it('keeps imported console restrictions and extra domains in drafts during setup',()=>{
+ const demo=createMockApi({staticDemo:true,setup:true})
+ const imported={origin:'https://caddyadmin.demo.example.com',admin_domain:'caddyadmin.demo.example.com',domains:[{id:'home',name:'demo.example.com',access:'trusted' as const},{id:'other',name:'other.example.net',access:null}],console_lan_only:true,lan_cidrs:['10.0.0.0/8'],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:['1.1.1.1']}
+ demo.handle('POST','/setup/complete',{settings:{domain:'demo.example.com'},import_settings:imported})
+ const data=demo.handle('GET','/settings').body as Settings
+ expect(data.config).toMatchObject(imported)
+ expect(data.active_config.console_lan_only).toBe(false)
+ expect(data.active_config.domains).toEqual([imported.domains[0]])
+})

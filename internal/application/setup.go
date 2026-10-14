@@ -87,7 +87,9 @@ func ManagedSettingsForSetup(input SetupSettings) (domain.ManagedSettings, error
 		resolvers = []string{"1.1.1.1"}
 	}
 	settings := domain.ManagedSettings{Origin: "https://caddyadmin." + name, AdminDomain: "caddyadmin." + name,
-		Domains: []domain.ManagedDomain{{ID: name, Name: name}}, LAN: []string{}, UpstreamCIDRs: []string{}, AllowedNames: []string{}, DeniedIPs: []string{}, Resolvers: resolvers}
+		Domains: []domain.ManagedDomain{{ID: name, Name: name, Access: domain.DomainAccess("internet")}},
+		LAN:     []string{"0.0.0.0/0", "::/0"}, UpstreamCIDRs: []string{"0.0.0.0/0", "::/0"},
+		AllowedNames: []string{"*"}, DeniedIPs: []string{}, Resolvers: resolvers}
 	if input.ImportSettings != nil {
 		imported := input.ImportSettings
 		if imported.PreviousAdminDomain != "" || imported.PreviousOrigin != "" || imported.AdminDomain != "caddyadmin."+imported.AdminBase() || imported.Origin != "https://"+imported.AdminDomain {

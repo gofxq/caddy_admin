@@ -65,7 +65,7 @@
 
 Setup 与交接入口的监听、网络可达性与可选来源限制和关闭时机见[运维说明](operations.md#初始化与访问边界)。
 
-普通完成请求 `settings` 仅包含 `domain` 与可选 `resolvers`（默认 `1.1.1.1`）。服务端规范化基础域名、登记首个 `{id,name,access:null}`，派生 `admin_domain=caddyadmin.<domain>` 及 HTTPS Origin；`console_lan_only:false`，可信网段与上游许可初始为空。普通请求不接受旧 `homelab_domain` 或网络输入。显式导入通过 `import_settings` 提交完整新格式设置，可提交 `services`；采用 `import_settings` 或非空服务草稿时均须 `confirm_import:true`，空服务列表不免除域名与策略导入确认。导入控制台限制只入草稿，不自动启用。
+普通完成请求 `settings` 仅包含 `domain` 与可选 `resolvers`（默认 `1.1.1.1`）。服务端规范化基础域名、登记首个 `{id,name,access:"internet"}`，派生 `admin_domain=caddyadmin.<domain>` 及 HTTPS Origin；`console_lan_only:false`，`lan_cidrs` 与 `upstream_cidrs` 均为 `["0.0.0.0/0","::/0"]`，`allowed_names:["*"]`、`denied_ips:[]`。独立 `*` 许可全部合法上游名称，仍检查全部解析 IP 和系统受保护目标。普通请求不接受旧 `homelab_domain` 或网络输入。显式导入通过 `import_settings` 提交完整新格式设置，可提交 `services`；采用 `import_settings` 或非空服务草稿时均须 `confirm_import:true`，空服务列表不免除域名与策略导入确认。导入控制台限制只入草稿，不自动启用。
 
 预配置密码用顶层 `use_configured_password:true,setup_id`；完成请求的预配置 Token 用顶层 `use_configured_token:true,setup_id`；DNS 确认也接受 `cloudflare.use_configured_token:true,cloudflare.setup_id`，替代对应手动值。必须明确使用确认，不能同时提交手动覆盖值；重建后的旧 Setup 标识拒绝。状态缺失时手动输入，非法部署值须修正后重建。外部与测试模式不接受本地 Token。Setup 不按公网/私网来源或私网 IP Host 判断，但精确 Origin、限速与初始化状态检查仍执行。
 
@@ -145,7 +145,9 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 
 ## 发布协议
 
-域名格式为 `{id,name,access}`，`access` 为 `null | "trusted" | "internet"`。服务 `domain_id` 必须引用登记域名；启用业务服务发布前必须已配置访问范围。设置保存仅改变草稿，控制台限制独立于业务可信网段；启用时须有非空可信网段，发布不能排除当前已认证来源。
+域名格式为 `{id,name,access}`，`access` 为 `null | "trusted" | "internet"`。服务 `domain_id` 必须引用登记域名；启用业务服务发布前必须已配置访问范围。设置保存仅改变草稿，控制台限制独立于业务可信网段；启用时须有非空可信网段，发布不能排除当前已认证来源。普通初始化及前端新增域名默认 `internet`；显式 `null` 和导入原值保留。可信全网段不会因启用限制而自动收窄。
+
+`allowed_names` 接受独立 `*` 或合法的精确名称，不支持 `*.example.com` 等其他通配形式；名称目标须匹配许可，全部解析 IP 均须落在 `upstream_cidrs` 并通过受保护目标检查。空名称列表拒绝名称目标，空上游网段拒绝全部目标。配置 v2 导入导出支持 `*`，不补齐已有或导入配置的空列表。
 
 预览包含 `settings`、`active_settings`、`settings_changed`、`revision`、`services`、`changes`、`config`、`hash`、`runtime_hash`、`expected_hash`、`drift`、`rollback_id`。业务变更类型包括 `added`、`deleted`、`updated`、`enabled`、`disabled`，并附带前后服务模型。
 

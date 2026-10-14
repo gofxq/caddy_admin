@@ -133,7 +133,7 @@ it('keeps first-run guidance after a settings-only publication and uses actual s
  view(Overview,'/');const guide=await screen.findByRole('heading',{name:'首次运行任务中心'});const tasks=within(guide.closest('section')!)
  await waitFor(()=>expect(tasks.getByText('创建服务草稿').closest('li')).not.toHaveClass('done'))
  expect(tasks.getByText('完成首个服务上线').closest('li')).not.toHaveClass('done')
- expect(tasks.getByText('配置上游许可草稿').closest('li')).toHaveClass('done')
+ expect(tasks.getByText('上游许可草稿已配置').closest('li')).toHaveClass('done')
 })
 it.each([{scheme:'http' as const,port:80,next:'https',want:443},{scheme:'https' as const,port:443,next:'http',want:80},{scheme:'http' as const,port:8080,next:'https',want:8080}])('updates default ports but preserves custom ports when editing $scheme:$port',async({scheme,port,next,want})=>{
  server({revision:3,services:[{...service,scheme,port}],published:[]});view(Services);fireEvent.click(await screen.findByRole('button',{name:'编辑 照片库'}));fireEvent.change(screen.getByLabelText('上游协议'),{target:{value:next}});expect(screen.getByLabelText('端口')).toHaveValue(want)

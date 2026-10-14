@@ -11,3 +11,11 @@ it('preserves optional observation flags and rejects nonboolean values',()=>{
  for(const k of Object.keys(flags) as (keyof typeof flags)[])expect(parsed.settings[k]).toBe(true)
  expect(()=>parseConfiguration(JSON.stringify({...configurationFixture,settings:{...configurationFixture.settings,metrics_enabled:'true'}}))).toThrow()
 })
+
+it('preserves standalone wildcard and full networks without filling explicit empty policies',()=>{
+ const open={...configurationFixture,settings:{...configurationFixture.settings,lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*']}}
+ expect(parseConfiguration(JSON.stringify(open)).settings).toEqual(open.settings)
+ const empty={...configurationFixture,settings:{...configurationFixture.settings,lan_cidrs:[],upstream_cidrs:[],allowed_names:[]}}
+ expect(parseConfiguration(JSON.stringify(empty)).settings).toEqual(empty.settings)
+ for(const name of ['*.example.com','photo*','bad/name',''])expect(()=>parseConfiguration(JSON.stringify({...open,settings:{...open.settings,allowed_names:[name]}}))).toThrow()
+})

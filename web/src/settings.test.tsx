@@ -75,3 +75,31 @@ it('compares repeated draft edits with active policy when exposure is still unpu
  expect(screen.getByRole('button',{name:'保存设置草稿'})).toBeDisabled()
  expect(screen.getByLabelText('我已核对影响，确认放开业务或控制台访问范围。')).not.toBeChecked()
 })
+
+it('defaults a new domain to public access and requires confirmation before saving',async()=>{
+ const config={origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[{id:'first',name:'example.com',access:'internet'}],console_lan_only:false,lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*'],denied_ips:[],resolvers:['1.1.1.1'],test_tls:true}
+ const fetch=vi.fn().mockImplementation(async()=>new Response(JSON.stringify({revision:3,config,active_config:config,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown'}})))
+ vi.stubGlobal('fetch',fetch);render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Settings/></QueryClientProvider>)
+ fireEvent.click(await screen.findByRole('button',{name:'添加域名'}))
+ expect(screen.getAllByLabelText(/访问范围 /)[1]).toHaveValue('internet')
+ expect(screen.getByRole('button',{name:'保存设置草稿'})).toBeDisabled()
+ fireEvent.change(screen.getAllByLabelText(/基础域名 /)[1],{target:{value:'another.example.net'}})
+ fireEvent.click(screen.getByRole('checkbox',{name:/确认放开业务或控制台访问范围/}))
+ fireEvent.click(screen.getByRole('button',{name:'保存设置草稿'}))
+ await waitFor(()=>expect(fetch.mock.calls.some(([,options])=>options?.method==='PUT')).toBe(true))
+ const body=JSON.parse(fetch.mock.calls.find(([,options])=>options?.method==='PUT')![1].body)
+ expect(body.settings.domains[1]).toMatchObject({name:'another.example.net',access:'internet'})
+ expect(body.confirm_exposure).toBe(true)
+})
+
+it.each(['0.0.0.0/0','::/0'])('explains that trusted range %s must be narrowed before LAN/VPN restriction is effective',async range=>{
+ const config={origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[{id:'first',name:'example.com',access:'internet'}],console_lan_only:false,lan_cidrs:[range],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*'],denied_ips:[],resolvers:['1.1.1.1'],test_tls:true}
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({revision:3,config,active_config:config,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown'}}))))
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Settings/></QueryClientProvider>)
+ expect(await screen.findByText(/当前可信网段包含全网段/)).toBeInTheDocument()
+ fireEvent.click(screen.getByLabelText('仅允许 LAN/VPN 访问控制台'))
+ expect(screen.getByText(/替换为实际 LAN\/VPN 网段/)).toBeInTheDocument()
+ fireEvent.change(screen.getByLabelText('可信网络 CIDR'),{target:{value:'10.0.0.0/8'}})
+ expect(screen.queryByText(/当前可信网段包含全网段/)).not.toBeInTheDocument()
+ expect(screen.getByText(/全部合法服务名/)).toBeInTheDocument()
+})

@@ -48,7 +48,7 @@ export function Services(){
   <ErrorBox error={!editor&&!remove?change.error:null}/>
   {message&&<div className="notice notice-green" role="status"><span>{message}</span><Button variant="outline" size="sm" disabled={!canCreate} onClick={openNew}>继续添加</Button><Link to="/deployments" className="text-link">预览与发布</Link></div>}
   <div className="notice notice-neutral"><MoreHorizontal size={20}/><span>草稿修订 <strong>r{d?.revision??'—'}</strong> · 保存不会立即影响线上服务。</span><Link to="/deployments" className="text-link">预览与发布 <ArrowUpRight size={14}/></Link></div>
-  {settings.data&&!settings.data.config.upstream_cidrs.length&&!settings.data.config.allowed_names.length&&<div className="notice notice-amber">尚未许可任何上游目标。请先到 <Link to="/settings">设置</Link> 保存上游许可草稿，再添加服务，最后统一预览与发布。</div>}
+  {settings.data&&!settings.data.config.upstream_cidrs.length&&<div className="notice notice-amber">尚未许可任何上游目标。请先到 <Link to="/settings">设置</Link> 保存上游许可草稿，再添加服务，最后统一预览与发布。</div>}
   {settings.data&&!settings.data.config.domains.length&&<div className="notice notice-amber">尚未配置基础域名，请到 <Link to="/settings">设置</Link> 添加域名并保存草稿。</div>}
   <section className="card">
    <div className="filters"><div className="search"><Search size={17}/><input aria-label="搜索服务" placeholder="搜索名称、域名或上游…" value={keyword} onChange={e=>setKeyword(e.target.value)}/></div><select aria-label="按域名筛选" value={domainID} onChange={e=>setDomainID(e.target.value)}><option value="">所有域名</option>{settings.data?.config.domains.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><select aria-label="按状态筛选" value={state} onChange={e=>setState(e.target.value)}><option value="">所有状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></div>

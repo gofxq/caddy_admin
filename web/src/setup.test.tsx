@@ -388,3 +388,14 @@ it('separates DNS configuration from a read-only check and shows real query resu
  expect(screen.queryByRole('table',{name:'DNS 查询结果'})).not.toBeInTheDocument()
  expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
 })
+
+it('summarizes open defaults and explains that business services still need publication',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(status()).mockResolvedValueOnce(preflight()))
+ render(<Setup pollLogin={false}/>);await reachConfirmation()
+ const summary=screen.getByRole('region',{name:'配置摘要'})
+ expect(summary).toHaveTextContent('允许互联网访问')
+ expect(summary).toHaveTextContent('0.0.0.0/0')
+ expect(summary).toHaveTextContent('::/0')
+ expect(summary).toHaveTextContent('全部合法服务名')
+ expect(summary).toHaveTextContent('业务服务须另行发布')
+})
