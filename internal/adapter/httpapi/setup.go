@@ -37,6 +37,12 @@ func NewSetup(application SetupApplication, _ SetupOptions, done func()) http.Ha
 	api := &setupAPI{application: application, done: done, attempts: map[string][]time.Time{}}
 	router := newEngine()
 	router.Use(func(c *gin.Context) {
+		// Progress is an independent, read-only snapshot. Polling must not
+		// consume the small per-IP budget used for setup mutations.
+		if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/api/v1/setup/progress" {
+			c.Next()
+			return
+		}
 		if !api.allow(c.Request) {
 			abortError(c, &domain.AppError{Status: 429, Code: "rate_limited", Message: "请求过多，请稍后重试"})
 			return
@@ -44,12 +50,51 @@ func NewSetup(application SetupApplication, _ SetupOptions, done func()) http.Ha
 		c.Next()
 	})
 	router.GET("/api/v1/setup/status", api.status)
+	router.GET("/api/v1/setup/progress", api.progress)
 	router.POST("/api/v1/setup/preflight", api.preflight)
+	router.POST("/api/v1/setup/recheck", api.recheck)
 	router.POST("/api/v1/setup/complete", api.complete)
 	router.POST("/api/v1/setup/dns/preview", api.dnsPreview)
 	router.POST("/api/v1/setup/dns/confirm", api.dnsConfirm)
 	router.POST("/api/v1/setup/dns/check", api.dnsCheck)
 	return router
+}
+
+func (api *setupAPI) recheck(c *gin.Context) {
+	if !setupOriginMatches(c.GetHeader("Origin"), c.Request.Host) {
+		abortError(c, &domain.AppError{Status: 403, Code: "origin", Message: "请求来源不匹配"})
+		return
+	}
+	request, ok := bindJSON[struct {
+		SetupID string `json:"setup_id"`
+	}](c)
+	if !ok {
+		return
+	}
+	provider, ok := api.application.(interface {
+		RecheckAutomaticSetup(context.Context, string) (application.SetupProgress, error)
+	})
+	if !ok {
+		abortError(c, domain.Invalid("当前模式不支持重新检查"))
+		return
+	}
+	progress, err := provider.RecheckAutomaticSetup(c.Request.Context(), request.SetupID)
+	if err != nil {
+		abortError(c, err)
+		return
+	}
+	respondJSON(c, http.StatusOK, progress)
+}
+
+func (api *setupAPI) progress(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	progress := application.SetupProgress{Status: "manual", Stage: "configuration"}
+	if provider, ok := api.application.(interface {
+		AutomaticSetupProgress() application.SetupProgress
+	}); ok {
+		progress = provider.AutomaticSetupProgress()
+	}
+	respondJSON(c, http.StatusOK, progress)
 }
 
 func (api *setupAPI) allow(request *http.Request) bool {
@@ -79,7 +124,24 @@ func (api *setupAPI) status(c *gin.Context) {
 		abortError(c, err)
 		return
 	}
+	// Browsers send a same-origin Referer on this GET; API clients can use
+	// an exact Origin. Public reads get status only, without deployment values.
+	if !setupReadOriginMatches(c.Request) {
+		status.Defaults = nil
+		status.Resolvers = nil
+	}
 	respondJSON(c, http.StatusOK, status)
+}
+
+func setupReadOriginMatches(request *http.Request) bool {
+	if actual := request.Header.Get("Origin"); actual != "" {
+		return setupOriginMatches(actual, request.Host)
+	}
+	parsed, err := url.Parse(request.Referer())
+	if err != nil || parsed.User != nil {
+		return false
+	}
+	return setupOriginMatches(parsed.Scheme+"://"+parsed.Host, request.Host)
 }
 
 func (api *setupAPI) preflight(c *gin.Context) {

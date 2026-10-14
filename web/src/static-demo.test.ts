@@ -31,7 +31,9 @@ describe('static demo',()=>{
  })
  it('completes initialization and DNS locally, leaving new services as drafts',()=>{
   const demo=createMockApi({staticDemo:true,setup:true})
+  expect(demo.handle('GET','/setup/progress').body).toEqual({status:'manual',stage:'configuration'})
   expect(demo.handle('GET','/setup/status').body).toMatchObject({initialized:false})
+  expect(demo.handle('POST','/setup/recheck',{setup_id:'static-demo'}).status).toBe(409)
   const plan=demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body as {fingerprint:string}
   expect(plan).toMatchObject({name:'*.demo.example.com',address:'192.168.1.5',action:'create'})
   expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},cloudflare:{address:'192.168.1.5',fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(200)

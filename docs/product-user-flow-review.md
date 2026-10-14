@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TD
-    START[准备域名与可达部署入口] --> DEPLOY[拉取预构建镜像或使用源码构建覆盖]
+    START[准备域名与可达部署入口] --> DEPLOY[拉取预构建镜像或在独立卷中源码验证]
     DEPLOY --> MODE{Caddy 模式}
     MODE -->|内置| BUILTIN[HTTP 80 或 HTTPS 443 初始化]
     MODE -->|外部| EXTERNAL[配置 Admin API、Manager 地址与远端反代]
@@ -61,9 +61,9 @@ flowchart TD
 | 场景         | 当前入口与职责                                                                                                                      |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | 默认内置模式 | `compose.yaml` 拉取 `ghcr.io/gofxq/caddy-admin:latest`；打开 `http://服务器IP/setup`；初始化后 HTTP 跳转 HTTPS                              |
-| 本地源码构建 | 追加 `compose.build.yaml`，使用独立的 `caddy-admin:local` 标签                                                                      |
+| 本地源码构建 | 追加 `compose.validation.yaml`，构建 `caddy-admin:local` 并使用独立验证卷                                                                      |
 | 外部 Caddy   | 追加 `compose.external.yaml`，配置 `CADDY_ADMIN_URL`、`MANAGER_DIAL`；HTTPS Setup 默认使用宿主 8082，宿主 80/443 留给远端 Caddy |
-| 隔离验证     | 构建当前源码，使用 `compose.validation.yaml` 的随机回环端口和独立测试卷，默认测试 CA 且不读取真实 `.run/`                                         |
+| 隔离验证     | 构建当前源码，使用 `compose.validation.yaml` 的独立测试卷，不读取真实 `.run/`；端口沿用默认映射，测试 CA 按需启用                                         |
 
 默认内置模式没有随机 Setup 端口。凭据可在向导填写，也可通过 Compose `environment` 或环境变量/`.env` 预配置，Setup 只确认使用。HTTP 明文传输手动凭据，建议使用 HTTPS。第一个有效提交创建唯一管理员；Setup 不限制公网或私网来源，初始化后控制台来源限制默认关闭。
 

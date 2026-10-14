@@ -61,10 +61,10 @@ func TestPreflightSetupNormalizesSettingsAndClassifiesChecks(t *testing.T) {
 	if result.Normalized.AdminDomain != "caddyadmin.home.example.com" || result.Normalized.AdminOrigin != "https://caddyadmin.home.example.com" {
 		t.Fatalf("normalized settings = %#v", result.Normalized)
 	}
-	if !result.CanComplete || !result.RequiresAcknowledgement {
+	if !result.CanComplete || result.RequiresAcknowledgement || result.WarningFingerprint != "" {
 		t.Fatalf("preflight flags = complete %v acknowledgement %v", result.CanComplete, result.RequiresAcknowledgement)
 	}
-	want := map[string]string{"settings_valid": "pass", "resolver_reachable": "pass", "admin_dns": "warning"}
+	want := map[string]string{"settings_valid": "pass", "resolver_reachable": "pass", "admin_dns": "info"}
 	for _, check := range result.Checks {
 		if status, ok := want[check.ID]; ok {
 			if check.Status != status {
@@ -322,8 +322,7 @@ func TestSetupCompletionUsesCloudflareRecordsDespiteFilteredServerDNS(t *testing
 	repo := &setupRepository{}
 	snapshot := &setupSnapshot{}
 	svc := New(Options{ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{SetupDNS: dns, SetupIntent: &setupIntentMemory{}, Secrets: &setupSecret{}, Snapshot: snapshot, BootstrapCertificate: &setupBootstrap{}, SetupProbe: setupProbe{resolver: true, dns: false}})
-	req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), AcknowledgeWarnings: true, Cloudflare: &SetupCloudflare{Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Address: "10.0.0.6", Fingerprint: "preview", Confirmed: true}}
-	req.WarningFingerprint = svc.PreflightSetup(context.Background(), req.Settings).WarningFingerprint
+	req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), Cloudflare: &SetupCloudflare{Token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Address: "10.0.0.6", Fingerprint: "preview", Confirmed: true}}
 	if _, err := svc.CompleteSetup(context.Background(), req); err != nil || !repo.completed || !snapshot.written {
 		t.Fatal("confirmed records were blocked by filtered server DNS", err)
 	}
@@ -332,7 +331,7 @@ func TestSetupCompletionUsesCloudflareRecordsDespiteFilteredServerDNS(t *testing
 func TestSetupRejectsWarningAcknowledgementWithoutCurrentFingerprint(t *testing.T) {
 	repo := &setupRepository{}
 	snapshot := &setupSnapshot{}
-	svc := New(Options{TestTLS: true, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{Snapshot: snapshot, SetupProbe: setupProbe{resolver: true, dns: false}})
+	svc := New(Options{TestTLS: true, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{Snapshot: snapshot, SetupProbe: setupProbe{resolver: false, dns: true}})
 	req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), AcknowledgeWarnings: true}
 	if _, err := svc.CompleteSetup(context.Background(), req); err == nil || repo.completed || snapshot.written {
 		t.Fatal("unbound warning acknowledgement was accepted", err)
@@ -344,7 +343,7 @@ func TestSetupWarningConsentIsBoundToSettingsAndCurrentWarnings(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			repo := &setupRepository{}
 			snapshot := &setupSnapshot{}
-			svc := New(Options{TestTLS: true, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{Snapshot: snapshot, SetupProbe: setupProbe{resolver: true, dns: false}})
+			svc := New(Options{TestTLS: true, ManagerDial: "127.0.0.1:8080", HTTPPort: "80", HTTPSPort: "443"}, repo, &setupCaddy{}, Dependencies{Snapshot: snapshot, SetupProbe: setupProbe{resolver: change == "warnings", dns: true}})
 			req := SetupRequest{Username: "admin", Password: "a-secure-password", Settings: validSetupSettings(), AcknowledgeWarnings: true}
 			req.WarningFingerprint = svc.PreflightSetup(context.Background(), req.Settings).WarningFingerprint
 			if change == "settings" {

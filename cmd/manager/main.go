@@ -273,13 +273,15 @@ func composeApplication(c config.Config, store *gormstore.Store) *application.Se
 		DataDir: c.DataDir, SnapshotDir: c.SnapshotDir, AdminURL: c.AdminURL,
 		ManagerDial: c.ManagerDial, ProbeAddress: c.ProbeAddress, CaddyStorage: c.CaddyStorage,
 		StaticRoot: c.StaticRoot, Socket: c.Socket, SetupPassword: os.Getenv("ADMIN_PASSWORD"), SetupToken: os.Getenv("CLOUDFLARE_API_TOKEN"), CaddyBinary: c.CaddyBinary,
-		HTTPPort: c.HTTPPort, HTTPSPort: c.HTTPSPort, TestTLS: c.TestTLS,
+		SetupDefaults: application.SetupDefaults{Domain: c.SetupDomain, Username: c.SetupUsername, Address: c.SetupAddress, Resolvers: c.SetupResolvers},
+		HTTPPort:      c.HTTPPort, HTTPSPort: c.HTTPSPort, TestTLS: c.TestTLS,
 		CertificateMode: c.CertificateMode, RuntimePolicy: c.ManagedSettings(),
 	}
 	client := caddyadapter.NewClient(caddyadapter.Options{AdminURL: c.AdminURL, Socket: c.Socket, CaddyBinary: c.CaddyBinary, DataDir: c.DataDir})
 	return application.New(options, store, client, application.Dependencies{
 		UpstreamProbe: &caddyadapter.TCPUpstreamProbe{},
 		SetupDNS:      cloudflare.New(), SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
+		SetupDoH: &caddyadapter.DoHProbe{},
 		Resolver: net.DefaultResolver, Certificates: &caddyadapter.Probe{},
 		Snapshot: &caddyadapter.Snapshot{Path: c.ActivePath()},
 		Secrets:  &caddyadapter.SecretFile{Path: secretPath}, BootstrapCertificate: &caddyadapter.BootstrapTLS{},
@@ -440,6 +442,9 @@ func serveSetup(c config.Config, store *gormstore.Store) error {
 	}
 	defer ready.Close()
 	go func() { _ = ready.Serve(listener) }()
+	// The lifetime belongs to the process, not a browser request. Reads and
+	// refreshes only observe progress; success shares the manual restart path.
+	autoDone := service.StartAutomaticSetup(life, func() { once.Do(func() { close(done) }) })
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
@@ -462,6 +467,7 @@ func serveSetup(c config.Config, store *gormstore.Store) error {
 	err = server.ListenAndServeTLS(certPath, keyPath)
 	stop()
 	<-shutdownDone
+	<-autoDone
 	if err == http.ErrServerClosed {
 		return nil
 	}

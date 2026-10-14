@@ -4,24 +4,24 @@
 
 ## 空白实例与草稿测试
 
-需要项目源码和 Docker Compose；`make validation-up` 加载 `compose.build.yaml` 构建当前源码，不依赖已发布镜像。使用默认内置模式，不设置 `CADDY_ADMIN_URL`。以下清理命令只删除 `caddy-admin-validation` 验证项目及其测试卷，先保存需要保留的测试导出文件。
+需要项目源码和 Docker Compose；`make up` 加载 `compose.validation.yaml` 构建当前源码，不依赖已发布镜像。使用默认内置模式，不设置 `CADDY_ADMIN_URL`。以下清理命令只删除 `caddy-admin-validation` 验证项目及其测试卷，先保存需要保留的测试导出文件。
 
 ```bash
-make validation-down
-make validation-up
-make validation-status
+make down
+make up
+make status
 ```
 
-环境使用独立命名卷和随机回环端口，不读取真实 `.run/`。按输出的 443 TCP 宿主端口打开 `https://127.0.0.1:端口/setup`；远程主机通过受控 SSH 转发在本机浏览器访问。重建后重新查询端口。
+环境使用独立命名卷，不读取真实 `.run/`，端口沿用 `compose.yaml` 的映射。需要随机回环端口时，在验证文件中显式覆盖端口；按 `make status` 输出的 443 TCP 宿主端口打开 `https://127.0.0.1:端口/setup`，远程主机通过受控 SSH 转发在本机浏览器访问。
 
 1. 创建管理员，设置至少 8 个字符的新密码；填写首个测试域名，例如 `home.example.test`。
 2. 核对 Setup 没有网段输入、设备来源绑定或默认访问范围选择；HTTP 手动凭据明文提示可见。
 3. 填写可达、可信的 DNS 解析器。核对并确认未解析测试域名等警告；字段或安全阻断项必须修正。
 4. 完成后通过 IP 临时入口登录，确认服务列表为空、控制台来源限制关闭。在设置明确配置域名访问范围和独立测试上游许可；禁止指向 Manager/Caddy 控制入口。测试 CA 下策略发布同样受证书门禁，添加含上游服务应使用显式导入的许可测试夹具，真实策略发布在专用可信证书实例或外部隔离模式验证。
 
-验证覆盖默认 `TEST_TLS=true`，无需真实 Token，使用内部测试证书，浏览器信任警告属于预期。公网可信证书就绪前，内置模式禁止校验/发布。本轮只验证初始化、草稿、导入导出与数据保留。
+无真实凭据验证前，先取消 `compose.validation.yaml` 中 `TEST_TLS` 的注释，使用 `TEST_TLS=true`，无需真实 Token，使用内部测试证书，浏览器信任警告属于预期。公网可信证书就绪前，内置模式禁止校验/发布。本轮只验证初始化、草稿、导入导出与数据保留。
 
-默认隔离模式不代表公网可信，不能启用 Cloudflare，仍禁止校验/发布。真实域名测试另建专用实例，显式关闭 `TEST_TLS`，按向导提交专用测试 Token、预览并确认 DNS 变更；不要把真实 Token 用于自动测试。
+测试 TLS 模式不代表公网可信，不能启用 Cloudflare，仍禁止校验/发布。真实域名测试另建专用实例，显式关闭 `TEST_TLS`，按向导提交专用测试 Token、预览并确认 DNS 变更；不要把真实 Token 用于自动测试。
 
 ## 现有实例导入导出
 
@@ -43,8 +43,8 @@ make validation-status
 
 ```bash
 docker compose -p caddy-admin-validation \
-  -f compose.yaml -f compose.build.yaml -f compose.validation.yaml restart caddy
-make validation-status
+  -f compose.yaml -f compose.validation.yaml restart caddy
+make status
 ```
 
 重新登录，核对草稿、启停状态和审计记录仍在，不重新出现初始化向导。
@@ -54,7 +54,7 @@ make validation-status
 结束测试：
 
 ```bash
-make validation-down
+make down
 ```
 
 ## 自动检查与真实环境验收

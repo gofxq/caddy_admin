@@ -13,7 +13,7 @@ password = 'ContainerSmokeOnly$123!'
 configured_token = 'a' * 40
 # Keep this harness isolated even if a user's validation overlay uses fixed ports.
 compose_override = root / 'smoke.compose.yaml'
-compose_override.write_text('services:\n  caddy:\n    environment:\n      ADMIN_PASSWORD: ' + json.dumps(password.replace('$', '$$')) + '\n      CLOUDFLARE_API_TOKEN: ' + json.dumps(configured_token) + '\n    ports: !override\n      - "127.0.0.1::80"\n      - "127.0.0.1::443"\n      - "127.0.0.1::443/udp"\nnetworks:\n  default:\n    name: ' + prefix + '-compose-net\n')
+compose_override.write_text('services:\n  caddy:\n    environment:\n      ADMIN_PASSWORD: ' + json.dumps(password.replace('$', '$$')) + '\n      CLOUDFLARE_API_TOKEN: ' + json.dumps(configured_token) + '\n    ports: !override\n      - "127.0.0.1::80"\n      - "127.0.0.1::443"\n      - "127.0.0.1::443/udp"\nnetworks:\n  default:\n    name: ' + prefix + '-compose-net\n    external: false\n')
 probe = ''
 
 def run(*args, check=True, timeout=60):
@@ -26,7 +26,7 @@ def docker(*args, **kw): return run('docker', *args, **kw)
 def compose(*args, **kw):
     # A cold source build can exceed the ordinary request/command deadline.
     kw.setdefault('timeout',900 if '--build' in args or 'build' in args else 60)
-    return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.build.yaml','-f','compose.validation.yaml','-f',str(compose_override),*args,**kw)
+    return docker('compose','-p',compose_project,'-f','compose.yaml','-f','compose.validation.yaml','-f',str(compose_override),*args,**kw)
 def curl(*args, **kw): return run('docker','exec',probe,'curl',*args,**kw)
 
 def eventually(fn, timeout=45):

@@ -15,6 +15,10 @@ import (
 const Version = "0.1.0"
 
 type Config struct {
+	SetupDomain               string                 `json:"-"`
+	SetupUsername             string                 `json:"-"`
+	SetupAddress              string                 `json:"-"`
+	SetupResolvers            []string               `json:"-"`
 	MetricsEnabled            bool                   `json:"metrics_enabled"`
 	AccessLogsEnabled         bool                   `json:"access_logs_enabled"`
 	AlertsEnabled             bool                   `json:"alerts_enabled"`
@@ -76,6 +80,21 @@ func ApplyManagedSettings(config *Config, settings domain.ManagedSettings) error
 
 func Load() (Config, error) {
 	config := Default()
+	// First-use values are validated only after the database confirms a new
+	// instance. Invalid or changed setup values must never prevent normal startup.
+	config.SetupDomain = strings.TrimSpace(os.Getenv("SETUP_DOMAIN"))
+	config.SetupUsername = os.Getenv("SETUP_ADMIN_USERNAME")
+	if config.SetupUsername == "" {
+		config.SetupUsername = "admin"
+	}
+	config.SetupAddress = strings.TrimSpace(os.Getenv("SETUP_CADDY_IP"))
+	config.SetupResolvers = []string{"1.1.1.1"}
+	if value := os.Getenv("SETUP_RESOLVERS"); value != "" {
+		config.SetupResolvers = strings.Split(value, ",")
+		for i := range config.SetupResolvers {
+			config.SetupResolvers[i] = strings.TrimSpace(config.SetupResolvers[i])
+		}
+	}
 	config.AdminURL = strings.TrimRight(os.Getenv("CADDY_ADMIN_URL"), "/")
 	if config.AdminURL != "" {
 		parsed, err := url.Parse(config.AdminURL)

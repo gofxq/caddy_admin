@@ -52,15 +52,18 @@ type SetupNormalizedSettings struct {
 }
 
 type SetupStatus struct {
-	AdminPasswordStatus   string   `json:"admin_password_status"`
-	CloudflareTokenStatus string   `json:"cloudflare_token_status"`
-	AdminPasswordError    string   `json:"admin_password_error,omitempty"`
-	CloudflareTokenError  string   `json:"cloudflare_token_error,omitempty"`
-	SetupID               string   `json:"setup_id"`
-	TestTLS               bool     `json:"test_tls"`
-	Initialized           bool     `json:"initialized"`
-	Resolvers             []string `json:"resolver_suggestions"`
-	ExternalCaddy         bool     `json:"external_caddy"`
+	Defaults              *SetupDefaults `json:"defaults,omitempty"`
+	ConfigurationError    string         `json:"configuration_error,omitempty"`
+	Automatic             SetupProgress  `json:"automatic"`
+	AdminPasswordStatus   string         `json:"admin_password_status"`
+	CloudflareTokenStatus string         `json:"cloudflare_token_status"`
+	AdminPasswordError    string         `json:"admin_password_error,omitempty"`
+	CloudflareTokenError  string         `json:"cloudflare_token_error,omitempty"`
+	SetupID               string         `json:"setup_id"`
+	TestTLS               bool           `json:"test_tls"`
+	Initialized           bool           `json:"initialized"`
+	Resolvers             []string       `json:"resolver_suggestions"`
+	ExternalCaddy         bool           `json:"external_caddy"`
 }
 
 type SetupHandoff struct {
@@ -155,6 +158,9 @@ func (service *Service) ConfiguredSetupToken(setupID string) (string, error) {
 }
 
 func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
+	if progress := service.AutomaticSetupProgress(); progress.Status == "running" {
+		return SetupStatus{Automatic: progress}, nil
+	}
 	service.setupMu.Lock()
 	defer service.setupMu.Unlock()
 	initialized, err := service.repository.IsInitialized(ctx)
@@ -163,6 +169,14 @@ func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
 		resolvers = service.resolverSuggestions()
 	}
 	status := SetupStatus{Initialized: initialized, Resolvers: resolvers, ExternalCaddy: service.externalCaddy(), TestTLS: service.options.TestTLS, SetupID: service.setupID}
+	status.Automatic = service.AutomaticSetupProgress()
+	if !initialized && err == nil {
+		defaults, configurationErr := service.setupDefaults()
+		status.Defaults = &defaults
+		if configurationErr != nil {
+			status.ConfigurationError = configurationErr.Error()
+		}
+	}
 	status.AdminPasswordStatus, status.AdminPasswordError = credentialStatus(service.options.SetupPassword, domain.ValidatePassword)
 	status.CloudflareTokenStatus, status.CloudflareTokenError = credentialStatus(service.options.SetupToken, domain.ValidateCloudflareToken)
 	return status, err
@@ -248,7 +262,7 @@ func (service *Service) PreflightSetup(ctx context.Context, input SetupSettings)
 	if dnsOK {
 		result.Checks = append(result.Checks, setupCheck("admin_dns", "pass", "服务器 DNS 已返回控制台地址"))
 	} else {
-		result.Checks = append(result.Checks, setupCheck("admin_dns", "warning", "服务器 DNS 未返回控制台地址，可能受缓存或内网地址过滤影响；浏览器 DoH 结果独立，请检查服务器解析器"))
+		result.Checks = append(result.Checks, setupCheck("admin_dns", "info", "服务器 DNS 未返回控制台地址，可能受缓存或内网地址过滤影响；此项仅作提示，不阻止初始化。证书与正式入口就绪状态将在初始化后核对。"))
 	}
 	if service.externalCaddy() {
 		if consoleOK {
@@ -286,14 +300,31 @@ func setupWarningFingerprint(result SetupPreflight) string {
 }
 
 func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest) (string, error) {
+	if service.AutomaticSetupProgress().Status == "running" {
+		return "", domain.Conflict("自动初始化正在后台执行，请等待状态核对完成")
+	}
 	service.setupMu.Lock()
 	defer service.setupMu.Unlock()
+	if service.AutomaticSetupProgress().Status == "running" {
+		return "", domain.Conflict("自动初始化正在后台执行，请等待状态核对完成")
+	}
+	return service.completeSetupLocked(ctx, request)
+}
+
+func (service *Service) completeSetupLocked(ctx context.Context, request SetupRequest) (string, error) {
+	if request.Cloudflare != nil {
+		cloudflare := *request.Cloudflare
+		request.Cloudflare = &cloudflare
+	}
 	initialized, err := service.repository.IsInitialized(ctx)
 	if err != nil {
 		return "", err
 	}
 	if initialized {
 		return "", domain.Conflict("系统已经初始化")
+	}
+	if service.setupUncertain {
+		return "", &domain.AppError{Status: 503, Code: "setup_result_uncertain", Message: "初始化保存结果待核对；请保留数据并检查存储，重启后先核对状态，不能重复提交"}
 	}
 	if len(request.Username) == 0 || len(request.Username) > 64 {
 		return "", domain.Invalid("用户名必须为 1–64 字节")
@@ -350,6 +381,11 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		if request.Cloudflare == nil || request.Cloudflare.Fingerprint == "" {
 			return "", domain.Invalid("请填写 Cloudflare Token 并检查 DNS 记录")
 		}
+		address, addressErr := domain.NormalizeSetupAddress(request.Cloudflare.Address)
+		if addressErr != nil {
+			return "", addressErr
+		}
+		request.Cloudflare.Address = address
 		if service.setupDNS == nil || service.setupIntent == nil || service.secrets == nil || service.bootstrapTLS == nil {
 			return "", domain.Invalid("初始化 DNS 或 secret 存储未配置")
 		}
@@ -413,10 +449,16 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		if plan.Action != "reuse" {
 			return "", domain.Invalid("DNS 记录需要新增或修改，请先预览并明确确认变更，解析生效后再完成初始化")
 		}
+		if plan.Warning != "" && !cf.Confirmed {
+			return "", domain.Invalid("DNS 记录包含需确认的警告；请重新核对记录并明确确认后完成初始化")
+		}
 		// The wizard checks propagation from the browser via DoH. Server-side
 		// resolution may filter private addresses; Cloudflare records and the
 		// checked or confirmed change fingerprint remain authoritative for completion.
 		if err = service.secrets.WriteCloudflareToken(cf.Token); err != nil {
+			return "", err
+		}
+		if err = service.caddy.Validate(ctx, raw); err != nil {
 			return "", err
 		}
 		confirmedPlan := plan
@@ -434,12 +476,6 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		}
 		return "", err
 	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = service.snapshot.Remove()
-		}
-	}()
 	credentials := SetupCredentials{Username: request.Username, Password: request.Password}
 	if len(imported) > 0 {
 		err = service.repository.CompleteSetupWithDraft(ctx, credentials, settings, certificate, imported)
@@ -447,12 +483,32 @@ func (service *Service) CompleteSetup(ctx context.Context, request SetupRequest)
 		err = service.repository.CompleteSetup(ctx, credentials, settings, certificate)
 	}
 	if err != nil {
+		// A failed commit response is not proof of rollback. Never remove the
+		// startup snapshot before checking the durable initialization state.
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		committed, checkErr := service.repository.IsInitialized(checkCtx)
+		cancel()
+		if committed && checkErr == nil {
+			if automaticDNS {
+				_ = service.setupIntent.Remove()
+			}
+			service.setActivePolicy(settings)
+			return settings.Origin, nil
+		}
+		if checkErr != nil {
+			service.setupUncertain = true
+		}
+		if !automaticDNS && checkErr == nil && !committed {
+			// This submission wrote a previously absent snapshot. A definitive
+			// non-commit in modes without a recovery intent may safely remove
+			// that candidate, allowing a retry after storage has been repaired.
+			_ = service.snapshot.Remove()
+		}
 		if automaticDNS {
 			return "", setupDNSLocalFailure()
 		}
 		return "", err
 	}
-	cleanup = false
 	if automaticDNS {
 		_ = service.setupIntent.Remove()
 	}

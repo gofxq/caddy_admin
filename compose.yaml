@@ -10,8 +10,12 @@ services: # 内置模式：docker compose up -d，然后打开 http://服务器I
       timeout: 5s
       start_period: 20s
     environment:
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-} # 可选：仅首次初始化使用；Setup 中确认使用，不回显。
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-} # 可选：首次使用确认后自动保存，初始化后运行文件优先。
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-} # 可选：仅首次初始化使用；手动 Setup 确认使用；完整预配置可自动初始化，不回显。
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-} # 可选：首次初始化后自动保存，初始化后运行文件优先。
+      SETUP_DOMAIN: ${SETUP_DOMAIN:-} # 可选：首个基础域名，例如 example.com 或 *.example.com。
+      SETUP_CADDY_IP: ${SETUP_CADDY_IP:-} # 自动初始化必填：客户端实际访问 Caddy 的 IPv4/IPv6；不推断，不接受 0.0.0.0 或 ::。
+      SETUP_ADMIN_USERNAME: ${SETUP_ADMIN_USERNAME:-admin} # 可选：首次管理员用户名。
+      SETUP_RESOLVERS: ${SETUP_RESOLVERS:-1.1.1.1} # 可选：逗号分隔的服务器 DNS IP 或 IP:端口。
     ports: # 宿主绑定直接修改下方映射；宿主防火墙决定实际可达范围。
       - '80:80' # 初始化前提供HTTP Setup（手动凭据会明文传输），完成后跳转 HTTPS；默认绑定宿主所有接口。
       - '443:443' # HTTPS 初始化、控制台及业务入口；改宿主端口后须显式访问该端口。

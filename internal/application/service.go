@@ -12,6 +12,7 @@ import (
 type Dependencies struct {
 	UpstreamProbe        UpstreamProbe
 	SetupDNS             SetupDNS
+	SetupDoH             SetupDoH
 	SetupIntent          SetupIntentStore
 	Resolver             Resolver
 	Certificates         CertificateProbe
@@ -28,6 +29,7 @@ type Service struct {
 	upstreamProbe       UpstreamProbe
 	upstreamMu          sync.Mutex
 	setupDNS            SetupDNS
+	setupDoH            SetupDoH
 	setupIntent         SetupIntentStore
 	options             Options
 	repository          Repository
@@ -43,6 +45,11 @@ type Service struct {
 	mu                  sync.Mutex
 	policyMu            sync.RWMutex
 	setupMu             sync.Mutex
+	autoMu              sync.RWMutex
+	autoOnce            sync.Once
+	autoDone            chan struct{}
+	autoProgress        SetupProgress
+	setupUncertain      bool // guarded by setupMu
 	owned               map[string]struct{}
 	activePolicy        atomic.Pointer[domain.ManagedSettings]
 	setupID             string
@@ -60,12 +67,13 @@ func New(options Options, repository Repository, caddy CaddyPort, dependencies D
 	service := &Service{
 		options: options, repository: repository, caddy: caddy, resolver: resolver,
 		upstreamProbe: dependencies.UpstreamProbe,
-		setupDNS:      dependencies.SetupDNS, setupIntent: dependencies.SetupIntent,
+		setupDNS:      dependencies.SetupDNS, setupDoH: dependencies.SetupDoH, setupIntent: dependencies.SetupIntent,
 		certificates: dependencies.Certificates, snapshot: dependencies.Snapshot,
 		secrets: dependencies.Secrets, bootstrapTLS: dependencies.BootstrapCertificate,
 		localAddresses: localAddresses, owned: map[string]struct{}{},
 		setupProbe: dependencies.SetupProbe, resolverSuggestions: dependencies.ResolverSuggestions,
-		setupID: domain.ID(),
+		setupID:  domain.ID(),
+		autoDone: make(chan struct{}), autoProgress: SetupProgress{Status: "manual", Stage: "configuration"},
 	}
 	service.setActivePolicy(options.RuntimePolicy)
 	return service

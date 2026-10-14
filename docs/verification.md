@@ -8,7 +8,7 @@
 | `make check` | Go vet 与两个 Go 模块的依赖校验 |
 | `make build` | Manager 构建、严格 TypeScript 与 Vite 构建 |
 | `make integration` | 构建固定 Caddy，验证生成、加载、快照恢复和 Cloudflare secret-file |
-| `make container-test` | 临时容器中验证内置 HTTP 初始化与 HTTPS 切换、外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
+| `make container-test` | 临时容器中验证环境预配置自动初始化、DNS 人工接续、内置 HTTP 初始化与 HTTPS 切换、外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
 | `make web` | `127.0.0.1:5177` 演示界面，仅用于界面检查 |
 | `make web-demo` | 安装依赖并构建、预览纯静态 Demo（`127.0.0.1:5178`），仅用于界面检查 |
 
@@ -17,10 +17,9 @@ Compose 配置检查：
 ```bash
 docker compose config --quiet
 docker compose -f compose.full.yaml config --quiet
-docker compose -f compose.yaml -f compose.build.yaml config --quiet
 CADDY_ADMIN_URL=http://caddy.internal:2019 MANAGER_DIAL=manager.internal:8080 \
 docker compose -f compose.yaml -f compose.external.yaml config --quiet
-docker compose -f compose.yaml -f compose.build.yaml -f compose.validation.yaml config --quiet
+docker compose -f compose.yaml -f compose.validation.yaml config --quiet
 ```
 
 Setup 自动测试覆盖浏览器 DoH 查询、地址族与通配符、超时与格式错误、无凭据请求、配置/查询状态解耦、连接重试、警告确认指纹与 Cloudflare 记录冲突。DoH 服务的 CORS/CSP、HTTP/HTTPS 实际浏览器访问、真实 DNS 传播和证书签发仍需在专用测试环境验收。
@@ -43,7 +42,7 @@ Vitest 使用 DOM 模拟环境。真实浏览器中的原生离开确认、移�
 
 按[从零测试流程](testing.md)完成空白初始化、现有实例导入导出、重启保留数据和新实例初始化导入，再运行自动检查。
 
-验证项目使用独立命名卷和随机宿主端口，不读取真实 `.run/`。验证端口仅绑定宿主回环地址；在宿主浏览器访问或通过受控 SSH 转发访问。`make validation-down` 删除验证项目及其测试卷。内置测试 TLS 模式仍禁止校验与发布，真实证书与业务访问需另行验收。
+验证项目使用独立命名卷，不读取真实 `.run/`，端口沿用 `compose.yaml` 的映射。需要随机回环端口时，在验证文件中显式覆盖端口，再在宿主浏览器访问或通过受控 SSH 转发访问。`make down` 删除验证项目及其测试卷。内置测试 TLS 模式仍禁止校验与发布，真实证书与业务访问需另行验收。
 
 ## 多域名与轻量 Setup 验收
 
@@ -67,3 +66,13 @@ Vitest 使用 DOM 模拟环境。真实浏览器中的原生离开确认、移�
 自动测试另覆盖 Counter 重置/断采/发布归属、Histogram 插值、五级存储、历史范围边界、服务 ID 不串接、数据库权限、日志去重/持久化游标/首次截断/历史服务恢复、CAA 分类脱敏、低流量和缺口的告警 unknown、确认持久化、会话/CSRF/参数拒绝及前端筛选和诊断交互。
 
 真实浏览器与移动端、长期高负载、宿主磁盘耗尽/写盘卡顿、外部 Caddy 模块安装与网络拓扑、真实 ACME/Cloudflare 签发续期仍需专用环境验收。自动测试不构成这些环境的部署验收。外部通知、原始日志检索和应用 HTTP 健康检查不在本版范围。
+
+## 环境预配置自动初始化验收
+
+Go/application 与 API 测试覆盖必需参数缺失和空白地址、非法非空参数、IPv4/IPv6 安全边界、只读 DNS 复用、变更/双栈警告/冲突/断联、控制台服务器 DNS 缺失仅作提示而允许保存、解析器不可达仍暂停、服务器预检警告、任务重入与手动提交竞争、快照和意图保护、数据库提交响应丢失及进度脱敏。前端测试覆盖后台进度、有效预填、暂停/失败/待核对时保留观测页、刷新不自动进入表单、显式人工接续、逐项预检原因与处理建议、不自动确认凭据及不发送写请求。公开详情只投影已知检查，不包含凭据、域名、IP、解析器列表、内部路径或原始错误。
+
+完整预配置无警告时打开 IP 应直接观察后台初始化并进入交接；参数不足时三步向导，不能用现有 DNS 推断缺失入口地址。首次服务为空，业务上线仍须校验并确认发布。初始化后的参数变化不得重置密码、Token 或线上配置。测试 CA、服务器 DNS 和服务端探测不能误报公网信任或浏览器可达。
+
+隔离容器场景模拟 Cloudflare 与服务器 DNS，仅使用生成的测试 CA、假 Token 和临时数据；运行真实 Manager/Caddy 验证启动自动初始化、IP 进度、HTTPS 登录、重启保留数据及已有实例忽略非法首次参数。它不代表真实 Cloudflare DNS Edit 权限、公网 DNS 传播或 ACME 签发验收，后者仍需专用测试环境。
+
+自动流程与观测页重检测试另覆盖 DoH 优先顺序、A/AAAA、随机通配符探测、NXDOMAIN、问题名不匹配、无关回答、查询失败脱敏与重检并发/旧 setup_id/未决结果拒绝；重检通过也不得创建管理员、写入 DNS、secret 或快照。隔离容器使用本地可信 HTTPS DoH/Cloudflare 模拟，验证重复重检仍只读。服务器 DNS 预检仍独立执行；DoH 正确不证明证书校验解析器可达。

@@ -1,8 +1,13 @@
-services: # 隔离测试：make validation-up；make validation-status 查询随机 HTTPS 端口。
+services: # 隔离测试：make up 构建启动；make status 查询 HTTPS 端口。
   caddy:
-    environment: # 必需：隔离验证默认使用测试证书，无需真实 Cloudflare Token。
+    image: caddy-admin:local # 本地镜像使用独立标签，不覆盖 GHCR 发布镜像。
+    pull_policy: build # 每次启动从本地源码构建，不拉取同名远端镜像。
+    build:
+      context: . # 项目根目录；沿用 Dockerfile 中锁定的依赖。
+      target: app # 构建 Caddy、Manager 与前端，不包含测试工具镜像。
+    environment: # 可选：启用 TEST_TLS 后使用测试证书，无需真实 Cloudflare Token。
       # TEST_TLS: ${TEST_TLS:-true} # 内部测试 CA；内置模式仍禁止校验/发布。真实域名验收需显式设为 false。
-    volumes: !override # 独立测试卷，不读取真实 .run；make validation-down 会删除这些卷。
+    volumes: !override # 独立测试卷，不读取真实 .run；make down 会删除这些卷。
       - validation_manager:/var/lib/manager
       - validation_snapshots:/srv/snapshots
       - validation_data:/data

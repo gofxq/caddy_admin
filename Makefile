@@ -1,4 +1,4 @@
-.PHONY: test build dev web web-demo static-web check integration container-test single-up validation-up validation-status validation-logs validation-down
+.PHONY: test build dev web web-demo static-web check integration container-test up down freshup status logs
 test:
 	go test -race ./cmd/... ./internal/...
 	cd deploy/caddy && go test -race ./observability
@@ -23,26 +23,19 @@ web-demo:
 	cd web && corepack pnpm build:demo
 	cd web && corepack pnpm preview:demo
 
-up:
-	docker compose -f compose.yaml -f compose.build.yaml up -d --build
-
-single-up:
-	docker compose up -d
 container-test:
 	docker build --target test-client -t caddy-admin:single-container-test .
 	python3 test/container_smoke.py
+	CGO_ENABLED=0 go build -o bin/setup-fixture ./test/setup-fixture
+	python3 test/environment_setup.py
 	
-validation-up:
-	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml up -d --build
-
-validation-status:
-	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml ps
-	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml port caddy 443 --protocol tcp
-
-validation-logs:
-	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml logs --tail=200
-
-validation-down:
-	docker compose -p caddy-admin-validation -f compose.yaml -f compose.build.yaml -f compose.validation.yaml down -v
-
-reup-validation: validation-down validation-up validation-status
+up:
+	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml up -d --build
+down:
+	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml down -v
+status:
+	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml ps
+	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml port caddy 443 --protocol tcp
+logs:
+	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml logs --tail=200 -f
+freshup: down up status logs

@@ -1,5 +1,5 @@
 import {request,isStaticDemo} from '../request'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Waypoints } from 'lucide-react'
 import { SetupDNSGuidance, suggestedDNSAddress, dnsRecord } from '../components/SetupDNSGuidance'
 
@@ -13,10 +13,11 @@ import { ConfigurationFile } from '../components/ConfigurationFile'
 import { setupConfiguration, type Configuration } from '../configuration'
 import { checkSetupDNS, DOH_PRESETS, type DNSReport, type DoHProvider } from '../setup-dns'
 import { SetupHandoff, type Handoff } from '../components/SetupHandoff'
+import { SetupProgress, type AutomaticProgress } from '../components/SetupProgress'
 
 type DNSPlan = { name: string; type: string; address: string; action: 'create' | 'update' | 'reuse'; old_address?: string; old_proxied?: boolean; warning?: string; fingerprint: string; inputKey: string }
 type Form = { username: string; password: string; domain: string; resolvers: string }
-type Check = { id: string; status: 'pass' | 'warning' | 'block'; message: string }
+type Check = { id: string; status: 'pass' | 'info' | 'warning' | 'block'; message: string }
 type Preflight = { normalized: { admin_domain: string; origin: string; admin_origin: string }; network_valid: boolean; network_error?: string; checks: Check[]; can_complete: boolean; requires_acknowledgement: boolean; warning_fingerprint: string }
 const initial: Form = { username: 'admin', password: isStaticDemo?'demo-password':'', domain: isStaticDemo?'home.example.com':'', resolvers: DEFAULT_RESOLVER }
 const defaultSteps = [{ id: 0, label: '管理员' }, { id: 1, label: '首个域名与 DNS' }, { id: 2, label: '确认' }]
@@ -38,6 +39,10 @@ function domainError(value: string) {
 }
 
 export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
+    const defaultsApplied = useRef(false)
+    const [automatic, setAutomatic] = useState<AutomaticProgress | null>(null), [automaticOffline, setAutomaticOffline] = useState(false)
+    const [manualTakeover, setManualTakeover] = useState(false)
+    const [rechecking, setRechecking] = useState(false), [recheckError, setRecheckError] = useState('')
     const [importFile, setImportFile] = useState<Configuration | null>(null), [importCandidate, setImportCandidate] = useState<Configuration | null>(null), [importName, setImportName] = useState(''), [confirmImport, setConfirmImport] = useState(false)
     const [step, setStep] = useState(0), [form, setForm] = useState(initial), [error, setError] = useState(''), [checking, setChecking] = useState(true), [externalCaddy, setExternalCaddy] = useState(false), [initialized, setInitialized] = useState(false)
     const [suggestions, setSuggestions] = useState<string[]>([]), [preflight, setPreflight] = useState<Preflight | null>(null), [ack, setAck] = useState(false), [submitting, setSubmitting] = useState(false)
@@ -55,7 +60,7 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
     const dnsInputKey = JSON.stringify([normalizeDomain(form.domain), dnsTarget, token, useToken, credentialStatus.id])
     const dnsQueryKey = JSON.stringify([dnsInputKey, dohProvider])
     const [dnsVerifiedKey, setDNSVerifiedKey] = useState(''), [dnsAppliedKey, setDNSAppliedKey] = useState(''), [dnsReport, setDNSReport] = useState<DNSReport | null>(null), [dnsAction, setDNSAction] = useState<'preview' | 'confirm' | 'check' | null>(null)
-    const dnsConfigured = !!dnsPlan && dnsPlan.inputKey === dnsInputKey && (dnsPlan.action === 'reuse' || dnsConfirmed && dnsAppliedKey === dnsInputKey)
+    const dnsConfigured = !!dnsPlan && dnsPlan.inputKey === dnsInputKey && (dnsPlan.action === 'reuse' && (!dnsPlan.warning || dnsConfirmed) || dnsConfirmed && dnsAppliedKey === dnsInputKey)
     const dnsNeedsChange = !!dnsPlan && dnsPlan.inputKey === dnsInputKey && dnsPlan.action !== 'reuse'
     const dnsReady = dnsConfigured && dnsVerifiedKey === dnsQueryKey
     const httpsEntry = location.protocol === 'http:' ? `https://${location.hostname}` : location.origin
@@ -64,7 +69,62 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
     const [recovering, setRecovering] = useState(false)
     const [adminOrigin, setAdminOrigin] = useState(''), [handoff, setHandoff] = useState<Handoff | null>(null), [handoffOffline, setHandoffOffline] = useState(false)
     const [connectionFailed, setConnectionFailed] = useState(false), [connectionAttempt, setConnectionAttempt] = useState(0), [handoffAttempt, setHandoffAttempt] = useState(0)
-    useEffect(() => { let alive = true; setChecking(true); setConnectionFailed(false); void (async () => { try { const body = await json(await request('/api/v1/setup/status', { cache: 'no-store' })); if (alive) { setExternalCaddy(body.external_caddy === true); setTestTLS(body.test_tls === true); setDNSAddress(current => current || (body.external_caddy === true ? '' : suggestedDNSAddress(location.hostname))); setInitialized(body.initialized === true); if (body.initialized === true) setRecovering(true); setSuggestions(Array.isArray(body.resolver_suggestions) ? body.resolver_suggestions : []); setCredentialStatus({ password: body.admin_password_status ?? 'missing', token: body.cloudflare_token_status ?? 'missing', passwordError: body.admin_password_error ?? '', tokenError: body.cloudflare_token_error ?? '', id: body.setup_id ?? '' }); setUsePassword(false); setUseToken(false); setError('') } } catch { try { const state = await json(await request('/api/v1/setup/handoff', { cache: 'no-store' })) as Handoff; if (!state.initialized) throw new Error('setup status unavailable'); if (alive) { setHandoff(state); setExternalCaddy(state.mode === 'external'); setAdminOrigin(state.admin_origin); setError('') } } catch { if (alive) setConnectionFailed(true) } } finally { if (alive) setChecking(false) } })(); return () => { alive = false } }, [connectionAttempt])
+    useEffect(() => {
+        let alive = true; setChecking(true); setConnectionFailed(false)
+        void (async () => {
+            try {
+                const body = await json(await request('/api/v1/setup/status', { cache: 'no-store', referrerPolicy: 'same-origin' }))
+                if (!alive) return
+                setAutomaticOffline(false)
+                if (body.automatic?.status === 'running') { setAutomatic(body.automatic); return }
+                setAutomatic(body.automatic ?? null)
+                setExternalCaddy(body.external_caddy === true); setTestTLS(body.test_tls === true)
+                if (!defaultsApplied.current) {
+                    const defaults = body.defaults
+                    setForm(current => ({ ...current, username: defaults?.username || current.username, domain: defaults?.domain || current.domain, resolvers: Array.isArray(defaults?.resolvers) && defaults.resolvers.length ? defaults.resolvers.join(',') : current.resolvers }))
+                    setDNSAddress(current => defaults?.address || current || (body.external_caddy === true ? '' : suggestedDNSAddress(location.hostname)))
+                    defaultsApplied.current = true
+                }
+                setInitialized(body.initialized === true); if (body.initialized === true) setRecovering(true)
+                setSuggestions(Array.isArray(body.resolver_suggestions) ? body.resolver_suggestions : [])
+                setCredentialStatus({ password: body.admin_password_status ?? 'missing', token: body.cloudflare_token_status ?? 'missing', passwordError: body.admin_password_error ?? '', tokenError: body.cloudflare_token_error ?? '', id: body.setup_id ?? '' })
+                setUsePassword(false); setUseToken(false); setError(body.configuration_error || '')
+            } catch {
+                try {
+                    const state = await json(await request('/api/v1/setup/handoff', { cache: 'no-store' })) as Handoff
+                    if (!state.initialized) throw new Error('setup status unavailable')
+                    if (alive) { setHandoff(state); setExternalCaddy(state.mode === 'external'); setAdminOrigin(state.admin_origin); setError('') }
+                } catch { if (alive) setConnectionFailed(true) }
+            } finally { if (alive) setChecking(false) }
+        })()
+        return () => { alive = false }
+    }, [connectionAttempt])
+    useEffect(() => {
+        if (automatic?.status !== 'running') return
+        let alive = true, timer: number | undefined
+        const poll = async () => {
+            try {
+                const progress = await json(await request('/api/v1/setup/progress', { cache: 'no-store' })) as AutomaticProgress
+                if (!alive) return
+                setAutomaticOffline(false)
+                if (progress.status === 'saved') { setAutomatic(progress); setRecovering(true); return }
+                if (progress.status && progress.status !== 'running') { setAutomatic(progress); setConnectionAttempt(value => value + 1); return }
+                if (progress.status === 'running') setAutomatic(progress)
+            } catch {
+                if (!alive) return
+                setAutomaticOffline(true)
+                // A restart may close the old Setup API. Reconcile handoff;
+                // never replay completion when the outcome is unknown.
+                try {
+                    const value = await json(await request('/api/v1/setup/handoff', { cache: 'no-store' })) as Handoff
+                    if (alive && value.initialized) { setAutomatic(null); setHandoff(value); setAdminOrigin(value.admin_origin); return }
+                } catch { /* Continue observing the background task. */ }
+            }
+            if (alive) timer = window.setTimeout(() => void poll(), 3000)
+        }
+        timer = window.setTimeout(() => void poll(), 1000)
+        return () => { alive = false; window.clearTimeout(timer) }
+    }, [automatic?.status])
     useEffect(() => {
         if ((!adminOrigin && !recovering) || !pollLogin || !isStaticDemo&&location.protocol === 'http:') return
         let alive = true, timer: number | undefined
@@ -75,17 +135,40 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
                 if (alive) { if (value.initialized === false && value.manager_status === 'ready') { restoreForm(); return } if (value.initialized) { setHandoff(value); setAdminOrigin(value.admin_origin); setExternalCaddy(value.mode === 'external'); setHandoffOffline(false) } else { setHandoffOffline(true) } }
             } catch {
                 if (alive) setHandoffOffline(true)
-                if (recovering) { try { const value = await json(await request('/api/v1/setup/status', { cache: 'no-store' })); if (alive && value.initialized === false) { restoreForm(); return } } catch {/* Keep checking an unknown result without replaying setup. */ } }
+                if (recovering) { try { const value = await json(await request('/api/v1/setup/status', { cache: 'no-store', referrerPolicy: 'same-origin' })); if (alive && value.initialized === false) { restoreForm(); return } } catch {/* Keep checking an unknown result without replaying setup. */ } }
             }
             if (alive) timer = window.setTimeout(() => void poll(), 3000)
         }
         void poll(); return () => { alive = false; window.clearTimeout(timer) }
     }, [adminOrigin, recovering, pollLogin, handoffAttempt])
-    useEffect(() => { if (!isStaticDemo&&adminOrigin && location.protocol === 'http:' && pollLogin) location.assign(httpsEntry + '/setup') }, [adminOrigin, httpsEntry, pollLogin])
+    useEffect(() => { if (!isStaticDemo&&(adminOrigin || recovering) && location.protocol === 'http:' && pollLogin) location.assign(httpsEntry + '/setup') }, [adminOrigin, recovering, httpsEntry, pollLogin])
+    const openedConsole = useRef('')
+    useEffect(() => {
+        if (isStaticDemo || !pollLogin || location.protocol !== 'https:' || handoffOffline || !handoff?.initialized || handoff.manager_status !== 'ready' || handoff.console_status !== 'ready') return
+        try {
+            const entry = new URL(handoff.admin_origin)
+            if (entry.protocol !== 'https:' || entry.username || entry.password || openedConsole.current === entry.origin) return
+            openedConsole.current = entry.origin
+            location.assign(entry.origin + '/')
+        } catch { /* Keep the handoff available if no valid formal entry was returned. */ }
+    }, [handoff, handoffOffline, pollLogin])
     const settings = useMemo(() => ({ domain: normalizeDomain(form.domain), resolvers: list(form.resolvers) }), [form])
     const importSettings = importFile ? { ...importFile.settings, domains: importFile.settings.domains, admin_domain: `caddyadmin.${normalizeDomain(form.domain)}`, origin: `https://caddyadmin.${normalizeDomain(form.domain)}`, resolvers: list(form.resolvers) } : undefined
     const field = (key: keyof Form) => (e: React.ChangeEvent<HTMLInputElement>) => { setForm({ ...form, [key]: e.target.value }); setPreflight(null); setAck(false); setConfirmImport(false) }
     const adminDomain = normalizeDomain(form.domain) ? `caddyadmin.${normalizeDomain(form.domain)}` : ''
+    async function recheckAutomatic() {
+        if (rechecking || !automatic?.can_recheck) return
+        const previous = automatic
+        setRechecking(true); setRecheckError(''); setAutomatic({ status: 'running', stage: 'doh' })
+        try {
+            const progress = await json(await request('/api/v1/setup/recheck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setup_id: credentialStatus.id }) })) as AutomaticProgress
+            setAutomatic(progress); setAutomaticOffline(false)
+        } catch (e) {
+            setRecheckError(e instanceof Error ? e.message : '重新检查失败，请保留当前状态后重试')
+            try { setAutomatic(await json(await request('/api/v1/setup/progress', { cache: 'no-store' })) as AutomaticProgress) }
+            catch { setAutomatic(previous); setAutomaticOffline(true) }
+        } finally { setRechecking(false) }
+    }
     async function runPreflight() { setPreflightBusy(true); setError(''); try { const result = await json(await request('/api/v1/setup/preflight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ settings, ...(importFile ? { services: importFile.services, import_settings: importSettings } : {}) }) })) as Preflight; if (preflight?.warning_fingerprint !== result.warning_fingerprint) setAck(false); setPreflight(result); return result } catch (e) { setError(e instanceof Error ? e.message : '预检失败，请重试'); return null } finally { setPreflightBusy(false) } }
     async function readDNSPlan(): Promise<DNSPlan> { const result = await json(await request('/api/v1/setup/dns/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...tokenRequest, domain: normalizeDomain(form.domain), address: dnsTarget }) })); return { ...result, inputKey: dnsInputKey } }
     async function previewDNS() { setDNSBusy(true); setDNSAction('preview'); setDNSAppliedKey(''); setDNSVerifiedKey(''); setDNSReport(null); setError(''); setDNSConfirmed(false); setDNSPlan(null); try { setDNSPlan(await readDNSPlan()) } catch (e) { setError(e instanceof Error ? e.message : 'DNS 预览失败，请重试') } finally { setDNSBusy(false); setDNSAction(null) } }
@@ -94,19 +177,19 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
         setDNSBusy(true); setDNSAction('check'); setError(''); setDNSVerifiedKey(''); setDNSReport(null)
         const inputKey = dnsQueryKey
         try {
+            const report = await checkSetupDNS(normalizeDomain(form.domain), dnsTarget, dohProvider)
+            setDNSReport(report); if (report.verified) setDNSVerifiedKey(inputKey)
             if (autoDNS && (!dnsConfigured || dnsPlan?.action === 'reuse')) {
                 setDNSPlan(null); setDNSConfirmed(false); setDNSAppliedKey('')
                 setDNSPlan(await readDNSPlan())
             }
-            const report = await checkSetupDNS(normalizeDomain(form.domain), dnsTarget, dohProvider)
-            setDNSReport(report); if (report.verified) setDNSVerifiedKey(inputKey)
         }
         catch (e) { setError(e instanceof Error ? e.message : 'DNS 查询失败，请保留输入后重试') }
         finally { setDNSBusy(false); setDNSAction(null) }
     }
     async function next() { if (step === 0) { setStep(1); return } const result = await runPreflight(); if (result?.can_complete) setStep(2) }
     async function submit() {
-        if (autoDNS && !dnsReady) { setError('请先检查 DNS，并按需确认记录变更'); return }
+        if (autoDNS && (!dnsRecord(dnsAddress) || !dnsReady)) { setError('请先检查 DNS，并按需确认记录变更'); return }
         if (!preflight?.can_complete || preflight.requires_acknowledgement && !ack) { setError('请核对预检结果并确认警告'); return }
         setSubmitting(true); setError('')
         try {
@@ -125,6 +208,7 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
         } finally { setSubmitting(false) }
     }
     if (adminOrigin || recovering) return <SetupHandoff adminOrigin={adminOrigin} handoff={handoff} offline={handoffOffline} externalCaddy={externalCaddy} httpsEntry={httpsEntry} testTLS={testTLS} onRetry={() => setHandoffAttempt(value => value + 1)} />
+    if (automatic && (automatic.status === 'running' || !manualTakeover && ['action_required', 'failed', 'uncertain'].includes(automatic.status))) return <SetupProgress progress={automatic} offline={automaticOffline || connectionFailed} loading={checking} rechecking={rechecking} retryError={recheckError} onManual={() => setManualTakeover(true)} onReadStatus={() => setConnectionAttempt(value => value + 1)} onRecheck={() => void recheckAutomatic()} />
     if (checking) return <div className="setup-screen"><div className="setup-card"><h1>正在检查初始化状态</h1><p className="muted">请稍候…</p></div></div>
     if (connectionFailed) return <div className="setup-screen"><section className="setup-card"><h1>无法连接初始化服务</h1><p className="notice notice-amber" role="alert">暂时无法读取初始化状态，尚不能确认是否已初始化。请检查服务与网络后重试，已输入的信息会保留。</p><button className="button button-primary" onClick={() => setConnectionAttempt(value => value + 1)}>重试连接</button><p className="muted">若此前已提交初始化，请通过 <a href={httpsEntry + '/setup'}>HTTPS 交接页面</a> 核对结果，避免重复提交。</p></section></div>
     if (initialized) return <div className="setup-screen"><div className="setup-card"><h1>系统已经初始化</h1><p className="muted">请使用配置的控制台域名进入登录页面。</p></div></div>
@@ -138,7 +222,7 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
     const importedDrafts = importFile && <><h3>导入服务草稿（{importFile.services.length}）</h3>{importFile.services.length === 0 ? <p className="muted">文件中没有服务草稿，初始化后服务列表为空。</p> : <ul className="setup-drafts">{importFile.services.map((s, i) => <li key={i}>{s.name} · {s.hostname} · {s.enabled ? '启用' : '停用'}</li>)}</ul>}</>
     const domainFields = <div className="field-group"><div className="field-heading"><label htmlFor="setup-domain">首个通配符域名</label><HelpTooltip label="首个通配符域名说明">登记基础域名，控制台使用 caddyadmin 一层子域；业务访问范围登录后配置。</HelpTooltip></div><input id="setup-domain" placeholder="home.example.com" aria-invalid={!!form.domain && !!domainFeedback} aria-describedby="setup-domain-feedback" value={form.domain} onChange={field('domain')} /><small id="setup-domain-feedback" className={domainFeedback && form.domain ? 'text-danger' : 'muted'}>{domainFeedback || `控制台：https://${adminDomain}`}</small></div>
     const resolverField = <div className="field-group"><div className="field-heading"><label htmlFor="setup-resolvers">DNS 解析器（逗号分隔）</label><HelpTooltip label="DNS 解析器说明">服务器用于 Caddy 证书 DNS 校验及运行诊断的解析器，默认 1.1.1.1；填写 IP/端口。浏览器 DoH 查询独立选择，不改变这里的配置。</HelpTooltip></div><input id="setup-resolvers" required placeholder="例如：192.168.1.1" value={form.resolvers} onChange={field('resolvers')} /></div>
-    return <div className="setup-screen"><section className={`setup-card ${step === 1 ? 'setup-dns-card' : ''}`}><div className="setup-brand"><Waypoints /><span>Caddy Admin</span></div><h1>初始化 Caddy Admin</h1><p className="muted">创建管理员，配置域名，核对后完成初始化。</p>{(step === 0 || isStaticDemo) && <div className="notice notice-amber">{isStaticDemo?'使用示例凭据即可体验初始化；DNS 与证书配置均在浏览器内模拟成功。':'第一个成功提交者将成为唯一管理员。请尽快完成初始化。'}</div>}{!isStaticDemo&&location.protocol === 'http:' && <div className="notice notice-amber">HTTP 会明文传输手动填写的管理员密码和 Token，建议使用 <a href={httpsEntry + '/setup'}>HTTPS 初始化</a>。</div>}<ol className="setup-steps" aria-label="初始化步骤">{steps.map(({ id, label }, index) => <li key={id} aria-current={id === step ? 'step' : undefined} className={id === step ? 'active' : id < step ? 'done' : ''}><b>{index + 1}</b>{label}</li>)}</ol>{error && <div className="notice notice-red" role="alert">{error}{error.includes('预配置') && error.includes('失效') && <button className="button button-outline" onClick={() => { setPreflight(null); setAck(false); setConfirmImport(false); setStep(0); setConnectionAttempt(v => v + 1) }}>重新读取凭据状态</button>}</div>}<fieldset className="setup-form" disabled={preflightBusy || dnsBusy || submitting}>
+    return <div className="setup-screen"><section className={`setup-card ${step === 1 ? 'setup-dns-card' : ''}`}><div className="setup-brand"><Waypoints /><span>Caddy Admin</span></div><h1>初始化 Caddy Admin</h1><p className="muted">创建管理员，配置域名，核对后完成初始化。</p>{(step === 0 || isStaticDemo) && <div className="notice notice-amber">{isStaticDemo?'使用示例凭据即可体验初始化；DNS 与证书配置均在浏览器内模拟成功。':'第一个成功提交者将成为唯一管理员。请尽快完成初始化。'}</div>}{!isStaticDemo&&location.protocol === 'http:' && <div className="notice notice-amber">HTTP 会明文传输手动填写的管理员密码和 Token，建议使用 <a href={httpsEntry + '/setup'}>HTTPS 初始化</a>。</div>}<ol className="setup-steps" aria-label="初始化步骤">{steps.map(({ id, label }, index) => <li key={id} aria-current={id === step ? 'step' : undefined} className={id === step ? 'active' : id < step ? 'done' : ''}><b>{index + 1}</b>{label}</li>)}</ol>{automatic?.message && <p className={`notice notice-${automatic.status === 'failed' ? 'red' : 'amber'}`} role="status">{automatic.message}</p>}{error && <div className="notice notice-red" role="alert">{error}{error.includes('预配置') && error.includes('失效') && <button className="button button-outline" onClick={() => { setPreflight(null); setAck(false); setConfirmImport(false); setStep(0); setConnectionAttempt(v => v + 1) }}>重新读取凭据状态</button>}</div>}<fieldset className="setup-form" disabled={preflightBusy || dnsBusy || submitting}>
         {step === 0 && <><details><summary>从导出的配置初始化</summary><p className="muted">导入域名、网络策略和服务草稿；管理员密码与 Cloudflare Token 不从文件导入。服务不会自动发布。</p><ConfigurationFile onSelect={() => setImportCandidate(null)} onLoad={(value, name) => { setImportCandidate(value); setImportName(name); setError('') }} />{importCandidate && <><p>{importName}：{importCandidate.settings.domains.map(d => d.name).join('、')}，{importCandidate.services.length} 个服务</p><button className="button button-outline" onClick={() => { try { const s = setupConfiguration(importCandidate); setForm({ ...form, domain: s.domain, resolvers: s.resolvers.join(',') }); setImportFile(importCandidate); setImportCandidate(null); setConfirmImport(false); setPreflight(null); setAck(false); setError('') } catch (e) { setError(e instanceof Error ? e.message : '无法采用该配置') } }}>采用导入配置</button></>}</details>{importFile && <p role="status" className="notice notice-green">已采用配置：{importFile.services.length} 个服务将保存为草稿。下一步集中核对设置，无需逐项重新填写。</p>}<h2>创建管理员</h2><label>管理员用户名<input aria-invalid={!!usernameFeedback} aria-describedby="setup-username-feedback" value={form.username} onChange={field('username')} autoComplete="username" /></label>{usernameFeedback && <p id="setup-username-feedback" className="text-danger">{usernameFeedback}</p>}{credentialStatus.password === 'ready' ? <><p>管理员密码已通过部署配置</p><label className="checkbox"><input type="checkbox" checked={usePassword} onChange={e => setUsePassword(e.target.checked)} />我确认使用已配置的管理员密码</label></> : credentialStatus.password === 'invalid' ? <p className="notice notice-red" role="alert">{credentialStatus.passwordError || '管理员密码部署配置有误，请修正或清空后重建容器。'}</p> : <NewPasswordField label="管理员密码" value={form.password} onChange={password => { setForm({ ...form, password }); setConfirmImport(false); setAck(false); setPreflight(null) }} />}</>}
         {step === 1 && <>
             <div className="section-heading"><h2>首个域名与 DNS</h2><span className="muted">{externalCaddy ? '外部 Caddy' : testTLS ? '测试 TLS' : 'Cloudflare DNS-01'}</span></div>
@@ -165,6 +249,7 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
                     {dnsPlan && <div className="setup-dns-actions"><button type="button" className={`button ${!dnsConfigured ? 'button-primary' : 'button-outline'}`} disabled={dnsPlan.inputKey !== dnsInputKey || !dnsConfirmed || dnsConfigured || dnsBusy} onClick={() => void confirmDNS()}>{dnsAction === 'confirm' ? '正在确认配置…' : '确认配置'}</button></div>}
                     {dnsAppliedKey === dnsInputKey && <p role="status" className="notice notice-green">{isStaticDemo ? 'DNS 配置已确认，已模拟成功。' : 'DNS 配置已确认，已保存到 Cloudflare。'}</p>}
                 </>}
+                {autoDNS && dnsPlan?.inputKey === dnsInputKey && dnsPlan.action === 'reuse' && dnsPlan.warning && <div className="setup-dns-plan"><p className="notice notice-amber">{dnsPlan.warning}</p><label className="checkbox warning"><input type="checkbox" checked={dnsConfirmed} onChange={e => setDNSConfirmed(e.target.checked)} />我已理解现有 DNS 记录警告，并确认该地址可达。</label></div>}
                 {!autoDNS && <p className="muted">请在 Cloudflare 保存上方的仅 DNS（灰云）记录，再检查解析。</p>}
             </section>
             <section className="setup-dns-section" aria-labelledby="setup-check-heading">
@@ -187,6 +272,6 @@ export function Setup({ pollLogin = true }: { pollLogin?: boolean }) {
             {blocks.map(check => <p className="notice notice-red" key={check.id}>{check.message}</p>)}
         </>}
 
-        {step === 2 && <><h2>确认配置</h2>{blocks.map(check => <p className="notice notice-red" key={check.id}>{check.message}</p>)}<button type="button" className="button button-outline button-sm" disabled={preflightBusy || submitting} onClick={() => { setAck(false); void runPreflight() }}>重新预检</button>{autoDNS && dnsPlan && <p className="notice notice-amber">DNS 记录已核对并通过目标 IP 校验：{dnsPlan.name} → {dnsPlan.address}。完成初始化时由服务器核对 Cloudflare 记录与检查或确认指纹；浏览器解析通过不代表服务器 DNS、证书或设备访问已就绪。</p>}{importFile && <>{importedDrafts}<label className="checkbox warning"><input type="checkbox" checked={confirmImport} onChange={e => setConfirmImport(e.target.checked)} />我已确认导入配置，服务仅保存为草稿。</label></>}<SetupConfigurationSummary settings={settings} importSettings={importSettings} adminDomain={preflight?.normalized.admin_domain || adminDomain} />{warnings.map(check => <div className="notice notice-amber" key={check.id}>{check.message}</div>)}{warnings.length > 0 && <label className="checkbox warning"><input type="checkbox" checked={ack} onChange={event => setAck(event.target.checked)} />我已理解上述警告，并确认继续初始化。</label>}<div className="notice notice-amber">{isStaticDemo?'完成后进入演示控制台，不会重启或修改真实服务。':'完成后服务会自动重启；关闭此页面不会取消后台操作。'}</div></>}
+        {step === 2 && <><h2>确认配置</h2>{blocks.map(check => <p className="notice notice-red" key={check.id}>{check.message}</p>)}<button type="button" className="button button-outline button-sm" disabled={preflightBusy || submitting} onClick={() => { setAck(false); void runPreflight() }}>重新预检</button>{autoDNS && dnsPlan && <p className="notice notice-amber">DNS 记录已核对并通过目标 IP 校验：{dnsPlan.name} → {dnsPlan.address}。完成初始化时由服务器核对 Cloudflare 记录与检查或确认指纹；浏览器解析通过不代表服务器 DNS、证书或设备访问已就绪。</p>}{importFile && <>{importedDrafts}<label className="checkbox warning"><input type="checkbox" checked={confirmImport} onChange={e => setConfirmImport(e.target.checked)} />我已确认导入配置，服务仅保存为草稿。</label></>}<SetupConfigurationSummary settings={settings} importSettings={importSettings} adminDomain={preflight?.normalized.admin_domain || adminDomain} />{preflight?.checks.filter(check => check.status === 'info').map(check => <p className="notice notice-amber" key={check.id}>提示：{check.message}</p>)}{warnings.map(check => <div className="notice notice-amber" key={check.id}>{check.message}</div>)}{warnings.length > 0 && <label className="checkbox warning"><input type="checkbox" checked={ack} onChange={event => setAck(event.target.checked)} />我已理解上述警告，并确认继续初始化。</label>}<div className="notice notice-amber">{isStaticDemo?'完成后进入演示控制台，不会重启或修改真实服务。':'完成后服务会自动重启；关闭此页面不会取消后台操作。'}</div></>}
     </fieldset><div className="setup-actions">{step > 0 && <button className="button button-outline" disabled={preflightBusy || dnsBusy || submitting} onClick={() => setStep(steps[steps.findIndex(item => item.id === step) - 1].id)}>上一步</button>}<button className="button button-primary" onClick={() => step < 2 ? void next() : void submit()} disabled={submitting || preflightBusy || dnsBusy || (step === 0 && (!!usernameFeedback || !passwordReady)) || (step === 1 && (!!domainFeedback || !list(form.resolvers).length || autoDNS && !dnsReady)) || (step === 2 && (autoDNS && !dnsReady || !preflight?.can_complete || warnings.length > 0 && !ack || !!importFile && !confirmImport))}>{submitting ? '正在提交…' : preflightBusy ? '正在预检…' : step < 2 ? '下一步' : '完成初始化'}</button></div></section></div>
 }

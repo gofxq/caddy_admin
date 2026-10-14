@@ -324,8 +324,10 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
     if(staticDemo&&path.startsWith('/setup/')){
       const settings=input.settings as {domain?:string;resolvers?:string[]}|undefined;
       const domain=settings?.domain??'home.example.com';
-      if(method==='GET'&&path==='/setup/status')return ok({initialized,external_caddy:false,test_tls:false,resolver_suggestions:['1.1.1.1'],admin_password_status:'missing',cloudflare_token_status:'missing',setup_id:'static-demo'});
+      if(method==='GET'&&path==='/setup/progress')return ok({status:'manual',stage:'configuration'});
+      if(method==='GET'&&path==='/setup/status')return ok({initialized,automatic:{status:'manual',stage:'configuration'},external_caddy:false,test_tls:false,resolver_suggestions:['1.1.1.1'],admin_password_status:'missing',cloudflare_token_status:'missing',setup_id:'static-demo'});
       if(method==='GET'&&path==='/setup/handoff')return ok({initialized,mode:'embedded',admin_origin:portableSettings.origin,manager_status:'ready',dns_status:'ready',console_status:'ready',temporary_entry:false,checked_at:now()});
+      if(method==='POST'&&path==='/setup/recheck')return fail(409,'conflict','演示流程未运行自动初始化，请在向导检查 DNS');
       if(method==='POST'&&path==='/setup/preflight')return ok({normalized:{admin_domain:`caddyadmin.${domain}`,origin:`https://caddyadmin.${domain}`,admin_origin:`https://caddyadmin.${domain}`},network_valid:true,checks:[{id:'demo',status:'pass',message:'演示预检通过，未进行真实网络检查'}],can_complete:true,requires_acknowledgement:false,warning_fingerprint:''});
       if(method==='POST'&&path==='/setup/dns/preview')return ok(setupDNSPlan(String(input.domain),String(input.address)));
       if(method==='POST'&&path==='/setup/dns/confirm'){
@@ -343,7 +345,8 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       }
       return fail(404,'not_found','演示 API 不支持该请求');
     }
-    if(method==="GET"&&path==="/setup/status")return ok({initialized:true,external_caddy:false,test_tls:false,resolver_suggestions:[]});
+    if(method==="GET"&&path==="/setup/progress")return ok({status:"manual",stage:"configuration"});
+    if(method==="GET"&&path==="/setup/status")return ok({initialized:true,automatic:{status:"manual",stage:"configuration"},external_caddy:false,test_tls:false,resolver_suggestions:[]});
     if(method==="POST"&&path.startsWith("/setup/"))return fail(409,"conflict","演示实例已经初始化，不会执行 Cloudflare DNS 操作");
     if (method === "GET" && path === "/auth/session")
       return authenticated

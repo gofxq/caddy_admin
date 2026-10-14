@@ -77,6 +77,7 @@ it('exports portable configuration and imports only drafts with confirmation and
 
 it('reports initialized demo state and never performs Setup DNS writes',()=>{
  const mock=createMockApi()
+ expect(mock.handle('GET','/setup/progress').body).toEqual({status:'manual',stage:'configuration'})
  expect(mock.handle('GET','/setup/status').body).toMatchObject({initialized:true,external_caddy:false})
  expect(mock.handle('POST','/setup/dns/preview',{token:'demo-token'}).status).toBe(409)
  expect(mock.handle('POST','/setup/complete',{}).status).toBe(409)

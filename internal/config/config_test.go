@@ -1,12 +1,35 @@
 package config_test
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gofxq/caddy_admin/internal/config"
 	"github.com/gofxq/caddy_admin/internal/domain"
 )
+
+func TestLoadSetupEnvironmentWithoutValidatingFirstUseValues(t *testing.T) {
+	t.Setenv("SETUP_DOMAIN", "*.Example.com")
+	t.Setenv("SETUP_ADMIN_USERNAME", "operator")
+	t.Setenv("SETUP_CADDY_IP", "not-an-ip")
+	t.Setenv("SETUP_RESOLVERS", "1.1.1.1, [2606:4700:4700::1111]:53")
+	c, err := config.Load()
+	if err != nil || c.SetupDomain != "*.Example.com" || c.SetupUsername != "operator" || c.SetupAddress != "not-an-ip" || len(c.SetupResolvers) != 2 {
+		t.Fatalf("first-use values must be deferred to setup: %+v %v", c, err)
+	}
+	raw, _ := json.Marshal(c)
+	if strings.Contains(string(raw), "not-an-ip") || strings.Contains(string(raw), "operator") {
+		t.Fatal("deployment setup values leaked into configuration JSON")
+	}
+	t.Setenv("SETUP_ADMIN_USERNAME", "")
+	t.Setenv("SETUP_RESOLVERS", "")
+	c, err = config.Load()
+	if err != nil || c.SetupUsername != "admin" || !reflect.DeepEqual(c.SetupResolvers, []string{"1.1.1.1"}) {
+		t.Fatal(c, err)
+	}
+}
 
 func TestConfigMapsEveryManagedField(t *testing.T) {
 	settings := domain.ManagedSettings{

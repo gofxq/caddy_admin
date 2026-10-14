@@ -1,0 +1,106 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest'
+import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react'
+import {Setup} from './pages/Setup'
+import {SetupProgress} from './components/SetupProgress'
+const response=(value:unknown)=>new Response(JSON.stringify(value))
+it('shows console DNS as a hint without asking for warning consent',()=>{
+ render(<SetupProgress progress={{status:'action_required',stage:'preflight',checks:[{id:'setup_doh',status:'pass',message:'DoH 检查通过'},{id:'admin_dns',status:'info',message:'服务器未解析，仅作提示'}]}} offline={false} loading={false} rechecking={false} retryError="" onManual={()=>{}} onReadStatus={()=>{}} onRecheck={()=>{}}/>)
+ expect(screen.getByRole('heading',{name:'检查已通过，等待确认'})).toBeInTheDocument()
+ expect(screen.getByText('提示，不阻断')).toBeInTheDocument()
+ expect(screen.queryByText('警告，需确认')).not.toBeInTheDocument()
+ expect(screen.queryByText('阻断，需修复')).not.toBeInTheDocument()
+})
+beforeEach(()=>vi.stubGlobal('location',new URL('https://localhost/setup')))
+afterEach(()=>{cleanup();vi.unstubAllGlobals()})
+it('observes background progress without posts or browser DNS queries',async()=>{
+ const fetch=vi.fn().mockImplementation(async()=>response({automatic:{status:'running',stage:'dns'}}));vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);await screen.findByRole('heading',{name:'正在自动初始化'})
+ expect(screen.getByText(/关闭页面不会取消/)).toBeInTheDocument()
+ expect(screen.queryByLabelText('管理员密码')).not.toBeInTheDocument()
+ expect(fetch.mock.calls.every(([,options])=>!options?.method || options.method==='GET')).toBe(true)
+})
+it('prefills valid partial values without confirming credentials or transmitting them',async()=>{
+ const fetch=vi.fn().mockResolvedValue(response({initialized:false,automatic:{status:'manual',stage:'configuration'},defaults:{username:'operator',domain:'home.example.com',address:'fd00::6',resolvers:['9.9.9.9']},admin_password_status:'ready',cloudflare_token_status:'ready',setup_id:'id'}));vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);expect(await screen.findByLabelText('管理员用户名')).toHaveValue('operator')
+ expect(screen.getByLabelText('我确认使用已配置的管理员密码')).not.toBeChecked()
+ fireEvent.click(screen.getByLabelText('我确认使用已配置的管理员密码'));fireEvent.click(screen.getByRole('button',{name:'下一步'}))
+ expect(screen.getByLabelText('首个通配符域名')).toHaveValue('home.example.com')
+ expect(screen.getByLabelText('Caddy 访问 IP')).toHaveValue('fd00::6')
+ expect(screen.getByLabelText('DNS 解析器（逗号分隔）')).toHaveValue('9.9.9.9')
+ expect(screen.getByLabelText('我确认使用已配置的 Cloudflare Token')).not.toBeChecked()
+ expect(fetch.mock.calls.every(([,options])=>!options?.method)).toBe(true)
+})
+it('explains automatic failure and lets the manual wizard take over',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({initialized:false,automatic:{status:'failed',stage:'dns',message:'Cloudflare 暂不可达，请检查网络'},defaults:{domain:'home.example.com'},admin_password_status:'missing'})))
+ render(<Setup pollLogin={false}/>);await screen.findByText('Cloudflare 暂不可达，请检查网络')
+ expect(screen.queryByLabelText('管理员密码')).not.toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button',{name:'进入向导处理'}))
+ expect(screen.getByLabelText('管理员密码')).toBeInTheDocument()
+})
+it('polls until manual intervention then preserves edits on credential status refresh',async()=>{
+ const fetch=vi.fn().mockImplementation(async(path:string)=>response(path.endsWith('/progress')?{status:'action_required',stage:'dns',message:'DNS 需要明确确认'}:{initialized:false,automatic:{status:fetch.mock.calls.length===1?'running':'action_required',stage:'dns',message:'DNS 需要明确确认'},defaults:{username:'operator',domain:'home.example.com'},admin_password_status:'ready',setup_id:'id'}));vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);await screen.findByRole('heading',{name:'正在自动初始化'})
+ await screen.findByRole('heading',{name:'自动初始化需要处理'}, {timeout:5000})
+ expect(screen.queryByLabelText('管理员用户名')).not.toBeInTheDocument()
+ await waitFor(()=>expect(screen.getByRole('button',{name:'进入向导处理'})).toBeEnabled())
+ fireEvent.click(screen.getByRole('button',{name:'进入向导处理'}))
+ expect(screen.getByLabelText('管理员用户名')).toHaveValue('operator')
+ fireEvent.change(screen.getByLabelText('管理员用户名'),{target:{value:'changed'}})
+ expect(screen.getByLabelText('我确认使用已配置的管理员密码')).not.toBeChecked()
+ expect(fetch.mock.calls.every(([,options])=>!options?.method)).toBe(true)
+})
+it('moves a completed automatic HTTP setup to the HTTPS handoff without needing an origin in progress',async()=>{
+ const assign=vi.fn();vi.stubGlobal('location',{protocol:'http:',hostname:'192.168.1.5',origin:'http://192.168.1.5',assign})
+ const fetch=vi.fn().mockImplementation(async(path:string)=>response(path.endsWith('/progress')?{status:'saved',stage:'restarting'}:{automatic:{status:'running',stage:'saving'}}));vi.stubGlobal('fetch',fetch)
+ render(<Setup/>);await screen.findByRole('heading',{name:'正在自动初始化'})
+ await waitFor(()=>expect(assign).toHaveBeenCalledWith('https://192.168.1.5/setup'),{timeout:4000})
+ expect(fetch.mock.calls.every(([,options])=>!options?.method)).toBe(true)
+})
+
+it.each(['action_required','failed','uncertain'])('keeps %s on the observation page after refresh without writes',async status=>{
+ const fetch=vi.fn().mockImplementation(async()=>response({initialized:false,automatic:{status,stage:'preflight',message:'服务器预检需要确认'},defaults:{username:'operator',domain:'home.example.com'},admin_password_status:'ready',setup_id:'id'}));vi.stubGlobal('fetch',fetch)
+ const first=render(<Setup pollLogin={false}/>);await screen.findByText('服务器预检需要确认')
+ expect(screen.queryByLabelText('管理员用户名')).not.toBeInTheDocument()
+ first.unmount();render(<Setup pollLogin={false}/>);await screen.findByText('服务器预检需要确认')
+ expect(screen.queryByLabelText('管理员用户名')).not.toBeInTheDocument()
+ expect(fetch.mock.calls.every(([,options])=>!options?.method || options.method==='GET')).toBe(true)
+ fireEvent.click(screen.getByRole('button',{name:'进入向导处理'}))
+ expect(screen.getByLabelText('管理员用户名')).toHaveValue('operator')
+ expect(screen.getByLabelText('我确认使用已配置的管理员密码')).not.toBeChecked()
+})
+
+it('shows the exact preflight checks and remedies without entering the wizard',async()=>{
+ const fetch=vi.fn().mockImplementation(async()=>response({initialized:false,automatic:{status:'action_required',stage:'preflight',message:'服务器预检有警告',checks:[{id:'settings_valid',status:'pass',message:'设置格式和安全边界有效'},{id:'resolver_reachable',status:'warning',message:'服务器 DNS 解析器暂不可用',next_step:'在高级服务器 DNS 中更换可达解析器，再重新预检。'},{id:'admin_dns',status:'info',message:'服务器尚未解析到控制台地址',next_step:'核对记录、缓存和内网地址过滤，再重新预检。'}]}}));vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);await screen.findByRole('region',{name:'预检详情'})
+ expect(screen.getByText('服务器 DNS 解析器暂不可用')).toBeInTheDocument()
+ expect(screen.getByText('服务器尚未解析到控制台地址')).toBeInTheDocument()
+ expect(screen.getByText(/在高级服务器 DNS 中更换可达解析器，再重新预检。/)).toBeInTheDocument()
+ expect(screen.getByText('设置格式和安全边界有效')).toBeInTheDocument()
+ expect(screen.queryByLabelText('管理员用户名')).not.toBeInTheDocument()
+ expect(fetch.mock.calls.every(([,options])=>!options?.method || options.method==='GET')).toBe(true)
+})
+
+it('explicitly rechecks DNS with only a setup identifier and keeps successful checks on the observation page',async()=>{
+ let finish!:(value:Response)=>void
+ const fetch=vi.fn().mockImplementation(async(path:string)=>path.endsWith('/recheck')?new Promise<Response>(resolve=>{finish=resolve}):response({initialized:false,setup_id:'current-id',automatic:{status:'action_required',stage:'preflight',message:'DNS 暂不可用',can_recheck:true}}));vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);const retry=await screen.findByRole('button',{name:'重新检查 DNS 与预检'})
+ fireEvent.click(retry);expect(await screen.findByRole('button',{name:'正在重新检查…'})).toBeDisabled()
+ expect(screen.getByRole('button',{name:'进入向导处理'})).toBeDisabled()
+ finish(response({status:'action_required',stage:'preflight',message:'重新检查通过，等待确认',can_recheck:true,checks:[{id:'setup_doh',status:'pass',message:'DoH 检查通过'},{id:'resolver_reachable',status:'pass',message:'解析器可响应'}]}))
+ await screen.findByRole('heading',{name:'检查已通过，等待确认'})
+ expect(screen.queryByLabelText('管理员用户名')).not.toBeInTheDocument()
+ const posts=fetch.mock.calls.filter(([,options])=>options?.method==='POST')
+ expect(posts).toHaveLength(1);expect(posts[0][0]).toBe('/api/v1/setup/recheck');expect(JSON.parse(posts[0][1].body)).toEqual({setup_id:'current-id'})
+})
+
+it('allows rechecking again after an interrupted response and a successful status read',async()=>{
+ const fetch=vi.fn().mockImplementation(async(path:string)=>{
+  if(path.endsWith('/recheck')||path.endsWith('/progress'))throw new Error('连接中断')
+  return response({initialized:false,setup_id:'current-id',automatic:{status:'action_required',stage:'dns',can_recheck:true}})
+ });vi.stubGlobal('fetch',fetch)
+ render(<Setup pollLogin={false}/>);fireEvent.click(await screen.findByRole('button',{name:'重新检查 DNS 与预检'}))
+ await screen.findByRole('alert');expect(screen.getByRole('button',{name:'重新检查 DNS 与预检'})).toBeDisabled()
+ fireEvent.click(screen.getByRole('button',{name:'重新读取状态'}))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'重新检查 DNS 与预检'})).toBeEnabled())
+ expect(fetch.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1)
+})

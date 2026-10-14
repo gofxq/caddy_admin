@@ -181,6 +181,7 @@ func TestSetupPreflightAndStatusDoNotBindClientNetwork(t *testing.T) {
 	statusRequest := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
 	statusRequest.RemoteAddr = "10.20.30.40:4567"
 	statusRequest.Header.Set("X-Forwarded-For", "203.0.113.9")
+	statusRequest.Header.Set("Referer", "http://example.com/setup")
 	statusResponse := httptest.NewRecorder()
 	handler.ServeHTTP(statusResponse, statusRequest)
 	if statusResponse.Code != http.StatusOK || strings.Contains(statusResponse.Body.String(), `"client_ip"`) || !strings.Contains(statusResponse.Body.String(), `"resolver_suggestions":["10.0.0.53"]`) {
@@ -438,5 +439,100 @@ func TestSetupDNSCheckRejectsUnknownFields(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnprocessableEntity || fake.calls != 0 {
 		t.Fatal(response.Code, response.Body.String())
+	}
+}
+
+type progressApplication struct {
+	setupApplication
+	reads int
+}
+
+func (p *progressApplication) AutomaticSetupProgress() application.SetupProgress {
+	p.reads++
+	return application.SetupProgress{Status: "running", Stage: "dns"}
+}
+func TestSetupProgressReadsDoNotConsumeMutationLimitOrExposeDefaults(t *testing.T) {
+	app := &progressApplication{}
+	handler := NewSetup(app, SetupOptions{}, nil)
+	for i := 0; i < 25; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/setup/progress", nil))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"running"`) || strings.Contains(w.Body.String(), "resolver") || strings.Contains(w.Body.String(), "setup_id") {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	if app.reads != 25 || app.calls != 0 {
+		t.Fatal("status reads triggered setup")
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "http://example.com")
+	handler.ServeHTTP(w, req)
+	if w.Code == 429 {
+		t.Fatal("polling exhausted write budget")
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/setup/progress", nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatal("anonymous retry endpoint exists")
+	}
+}
+
+type setupDefaultsApplication struct{ setupApplication }
+
+func (*setupDefaultsApplication) SetupStatus(context.Context) (application.SetupStatus, error) {
+	return application.SetupStatus{Defaults: &application.SetupDefaults{Domain: "home.example.com", Address: "10.0.0.6", Username: "operator", Resolvers: []string{"9.9.9.9"}}, Resolvers: []string{"10.0.0.53"}}, nil
+}
+func TestSetupDefaultsRequireExactSameOriginRead(t *testing.T) {
+	for _, tc := range []struct {
+		origin, referer string
+		full            bool
+	}{{}, {origin: "https://evil.example"}, {referer: "https://evil.example/setup"}, {origin: "https://192.168.1.5", full: true}, {referer: "https://192.168.1.5/setup", full: true}, {origin: "https://evil.example", referer: "https://192.168.1.5/setup"}} {
+		handler := NewSetup(&setupDefaultsApplication{}, SetupOptions{}, nil)
+		req := httptest.NewRequest(http.MethodGet, "https://192.168.1.5/api/v1/setup/status", nil)
+		req.Header.Set("Origin", tc.origin)
+		req.Header.Set("Referer", tc.referer)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatal(w.Code)
+		}
+		hasDefaults := strings.Contains(w.Body.String(), "home.example.com")
+		hasResolvers := strings.Contains(w.Body.String(), "10.0.0.53")
+		if hasDefaults != tc.full || hasResolvers != tc.full {
+			t.Fatal("unexpected read scope", tc, w.Body.String())
+		}
+	}
+}
+
+type setupRecheckApplication struct {
+	setupApplication
+	rechecks   int
+	receivedID string
+}
+
+func (a *setupRecheckApplication) RecheckAutomaticSetup(_ context.Context, id string) (application.SetupProgress, error) {
+	a.rechecks++
+	a.receivedID = id
+	return application.SetupProgress{Status: "action_required", Stage: "preflight", Message: "checks passed"}, nil
+}
+func TestSetupRecheckRequiresOriginAndAcceptsOnlySetupIdentifier(t *testing.T) {
+	for _, tc := range []struct {
+		origin, body string
+		want, calls  int
+	}{{"", `{"setup_id":"id"}`, 403, 0}, {"https://evil.example", `{"setup_id":"id"}`, 403, 0}, {"http://example.com", `{"setup_id":"id","token":"secret"}`, 422, 0}, {"http://example.com", `{"setup_id":"id"}`, 200, 1}} {
+		a := &setupRecheckApplication{}
+		h := NewSetup(a, SetupOptions{}, nil)
+		r := httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/setup/recheck", strings.NewReader(tc.body))
+		r.Header.Set("Origin", tc.origin)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.want || a.rechecks != tc.calls || a.calls != 0 {
+			t.Fatal(w.Code, w.Body.String(), a.rechecks)
+		}
+		if tc.calls > 0 && a.receivedID != "id" {
+			t.Fatal("missing restart binding")
+		}
 	}
 }

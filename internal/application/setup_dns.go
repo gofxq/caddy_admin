@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -69,8 +68,14 @@ func setupDNSLocalFailure() error {
 // ConfirmSetupDNS persists the intent before any remote write. Retrying reconciles
 // the original plan against the actual Cloudflare record, including lost responses.
 func (service *Service) ConfirmSetupDNS(ctx context.Context, settings SetupSettings, cf SetupCloudflare) (SetupDNSPlan, error) {
+	if service.AutomaticSetupProgress().Status == "running" {
+		return SetupDNSPlan{}, domain.Conflict("自动初始化正在后台执行，请等待状态核对完成")
+	}
 	service.setupMu.Lock()
 	defer service.setupMu.Unlock()
+	if service.AutomaticSetupProgress().Status == "running" {
+		return SetupDNSPlan{}, domain.Conflict("自动初始化正在后台执行，请等待状态核对完成")
+	}
 	managed, err := ManagedSettingsForSetup(settings)
 	if err != nil {
 		return SetupDNSPlan{}, err
@@ -156,8 +161,10 @@ func (service *Service) CheckSetupDNS(ctx context.Context, settings SetupSetting
 		return SetupDNSReport{}, domain.Invalid("请填写 DNS 目标 IP")
 	}
 	if address != "" {
-		if _, err := netip.ParseAddr(address); err != nil {
-			return SetupDNSReport{}, domain.Invalid("请填写有效的 DNS 目标 IP")
+		var err error
+		address, err = domain.NormalizeSetupAddress(address)
+		if err != nil {
+			return SetupDNSReport{}, err
 		}
 	}
 	if service.setupProbe == nil {

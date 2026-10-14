@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -94,9 +93,9 @@ func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (app
 	if err := domain.ValidateCloudflareToken(token); err != nil {
 		return p, err
 	}
-	ip, err := netip.ParseAddr(strings.TrimSpace(address))
-	if err != nil || ip.IsLoopback() || ip.Is4In6() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || !ip.IsGlobalUnicast() {
-		return p, domain.Invalid("自动 DNS 配置需要可访问的 IPv4 或 IPv6 地址，不含协议或端口")
+	address, err := domain.NormalizeSetupAddress(address)
+	if err != nil {
+		return p, err
 	}
 	hostname = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
 	if !domain.ValidDomain(hostname) || strings.ContainsAny(hostname, "/*: ?#\\") || !strings.Contains(hostname, ".") {
@@ -127,9 +126,9 @@ func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (app
 		return p, domain.Invalid("Token 无法访问对应 Cloudflare Zone；请确认域名已托管并授予该域名权限")
 	}
 	p.Name = "*." + hostname
-	p.Address = ip.String()
+	p.Address = address
 	p.Type = "AAAA"
-	if ip.Is4() {
+	if !strings.Contains(address, ":") {
 		p.Type = "A"
 	}
 	records, err := d.records(ctx, token, p.ZoneID, p.Name)

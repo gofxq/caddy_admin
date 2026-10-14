@@ -3,6 +3,7 @@ package application
 import "github.com/gofxq/caddy_admin/internal/domain"
 
 type Options struct {
+	SetupDefaults   SetupDefaults
 	SetupPassword   string
 	SetupToken      string
 	DataDir         string

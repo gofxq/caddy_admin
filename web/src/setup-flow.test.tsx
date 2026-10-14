@@ -50,7 +50,8 @@ it('blocks reuse when Token validation fails and keeps the inputs for retry',asy
  expect(await screen.findByRole('alert')).toHaveTextContent('Token 无法访问')
  expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
  expect(screen.getByLabelText('Cloudflare API Token')).toHaveValue('secret-token')
- expect(fetch.mock.calls.some(([p])=>p.startsWith('https://')||p.endsWith('/dns/confirm'))).toBe(false)
+ expect(fetch.mock.calls.some(([p])=>p.startsWith('https://'))).toBe(true)
+ expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/confirm'))).toBe(false)
 })
 
 it('invalidates checked reuse when the domain, IP or Token changes',async()=>{
@@ -154,6 +155,23 @@ it('keeps an initialized handoff on screen for the user to open the formal entry
  expect(assign).not.toHaveBeenCalled()
 })
 
+it('opens the ready formal console even when server console DNS is pending',async()=>{
+ const assign=vi.fn();vi.stubGlobal('location',{protocol:'https:',hostname:'192.168.2.6',origin:'https://192.168.2.6',assign})
+ const fetch=vi.fn().mockImplementation(async(path:string)=>reply(path.endsWith('/handoff')?{initialized:true,mode:'embedded',admin_origin:'https://caddyadmin.home.example.com',manager_status:'ready',dns_status:'pending',console_status:'ready',temporary_entry:true}:{initialized:true}))
+ vi.stubGlobal('fetch',fetch)
+ render(<Setup/>)
+ await waitFor(()=>expect(assign).toHaveBeenCalledWith('https://caddyadmin.home.example.com/'))
+ expect(fetch.mock.calls.every(([,options])=>!options?.method||options.method==='GET')).toBe(true)
+})
+
+it.each(['pending','error'])('keeps the handoff while the formal console is %s',async consoleStatus=>{
+ const assign=vi.fn();vi.stubGlobal('location',{protocol:'https:',hostname:'192.168.2.6',origin:'https://192.168.2.6',assign})
+ vi.stubGlobal('fetch',vi.fn().mockImplementation(async(path:string)=>reply(path.endsWith('/handoff')?{initialized:true,mode:'embedded',admin_origin:'https://caddyadmin.home.example.com',manager_status:'ready',dns_status:'ready',console_status:consoleStatus,temporary_entry:true}:{initialized:true})))
+ render(<Setup/>)
+ await screen.findByRole('link',{name:'打开正式控制台'})
+ expect(assign).not.toHaveBeenCalled()
+})
+
 it('clears old consent when returning to confirmation reveals different warnings',async()=>{
  let warning='old-warning'
  installAPI({warning:()=>warning});render(<Setup pollLogin={false}/>);await reachDNS()
@@ -193,4 +211,31 @@ it('restores preserved input only when handoff confirms setup has not completed'
  fireEvent.click(screen.getByRole('button',{name:'上一步'}))
  expect(screen.getByLabelText('Caddy 访问 IP')).toHaveValue('192.168.2.6')
  expect(fetch.mock.calls.filter(([path])=>path.endsWith('/complete'))).toHaveLength(1)
+})
+
+it('requires explicit consent for warnings on reused DNS without writing records',async()=>{
+ const fetch=installAPI({automatic:true,action:'reuse'}),original=fetch.getMockImplementation()!
+ fetch.mockImplementation(async(path:string)=>path.endsWith('/dns/preview')?reply({name:'*.h.cmx.ee',type:'A',address:'192.168.2.6',action:'reuse',fingerprint:'plan',warning:'另一个地址类型需要核对'}):original(path))
+ render(<Setup pollLogin={false}/>);await reachDNS()
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+ await screen.findByText('另一个地址类型需要核对')
+ await screen.findByRole('table',{name:'DNS 查询结果'})
+ expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
+ fireEvent.click(screen.getByLabelText('我已理解现有 DNS 记录警告，并确认该地址可达。'))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/confirm'))).toBe(false)
+ fireEvent.change(screen.getByLabelText('Caddy 访问 IP'),{target:{value:'192.168.2.8'}})
+ expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
+ expect(screen.queryByLabelText('我已理解现有 DNS 记录警告，并确认该地址可达。')).not.toBeInTheDocument()
+})
+
+it('queries DoH before reading the Cloudflare plan',async()=>{
+ const fetch=installAPI({automatic:true,action:'reuse'});render(<Setup pollLogin={false}/>);await reachDNS()
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}));await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ const doh=fetch.mock.calls.findIndex(([p])=>p.startsWith('https://'))
+ const cf=fetch.mock.calls.findIndex(([p])=>p.endsWith('/dns/preview'))
+ expect(doh).toBeLessThan(cf)
+ expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/confirm'))).toBe(false)
 })

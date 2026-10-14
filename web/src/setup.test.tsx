@@ -6,7 +6,7 @@ beforeEach(()=>{vi.stubGlobal('location',new URL('https://localhost/setup'))})
 afterEach(()=>{cleanup();vi.unstubAllGlobals()})
 
 const status=(external_caddy=false,resolver_suggestions:string[]=[])=>new Response(JSON.stringify({initialized:false,test_tls:true,external_caddy,resolver_suggestions,client_ip:'10.0.0.2'}),{status:200,headers:{'Content-Type':'application/json'}})
-const preflight=(warnings=false)=>new Response(JSON.stringify({normalized:{admin_domain:'caddyadmin.home.example.com',origin:'https://caddyadmin.home.example.com',admin_origin:'https://caddyadmin.home.example.com'},network_valid:true,checks:[{id:'settings_valid',status:'pass',message:'设置有效'},...(warnings?[{id:'admin_dns',status:'warning',message:'控制台域名尚未解析'}]:[])],can_complete:true,requires_acknowledgement:warnings,warning_fingerprint:warnings?'warnings-current':''}),{status:200,headers:{'Content-Type':'application/json'}})
+const preflight=(warnings=false)=>new Response(JSON.stringify({normalized:{admin_domain:'caddyadmin.home.example.com',origin:'https://caddyadmin.home.example.com',admin_origin:'https://caddyadmin.home.example.com'},network_valid:true,checks:[{id:'settings_valid',status:'pass',message:'设置有效'},...(warnings?[{id:'resolver_reachable',status:'warning',message:'服务器 DNS 解析器暂不可用'}]:[])],can_complete:true,requires_acknowledgement:warnings,warning_fingerprint:warnings?'warnings-current':''}),{status:200,headers:{'Content-Type':'application/json'}})
 
 function dohReply(path:string,address='192.168.1.6'){
  const url=new URL(path),type=url.searchParams.get('type')==='AAAA'?28:1,name=url.searchParams.get('name')
@@ -138,7 +138,7 @@ it('requires explicit acknowledgement for preflight warnings',async()=>{
  vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(status()).mockResolvedValueOnce(preflight(true)))
  render(<Setup pollLogin={false}/>)
  await reachConfirmation()
- expect(screen.getByText('控制台域名尚未解析')).toBeInTheDocument()
+ expect(screen.getByText('服务器 DNS 解析器暂不可用')).toBeInTheDocument()
  expect(screen.getByRole('button',{name:'完成初始化'})).toBeDisabled()
  fireEvent.click(screen.getByRole('checkbox'))
  expect(screen.getByRole('button',{name:'完成初始化'})).toBeEnabled()

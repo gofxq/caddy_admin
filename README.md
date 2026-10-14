@@ -33,7 +33,7 @@ docker compose up -d
 
 保存草稿不会影响线上，确认发布后才生效。
 
-可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；Setup 只确认使用，不回显。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
+可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；普通 Setup 只确认使用，不回显；内置正式模式额外提供 `SETUP_DOMAIN` 和 `SETUP_CADDY_IP` 时，启动后先通过服务端 DoH 检查解析，再只读核对 Cloudflare 记录；预检无阻断或需确认的警告且无需 DNS 变更则自动初始化；服务器未解析到控制台地址仅作提示，不暂停自动流程。需要变更或确认警告时接回三步向导。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
 
 首次登录后在设置中配置域名访问范围并保存上游许可草稿，再添加服务，统一预览、校验与确认发布。控制台 LAN/VPN 限制为登录后的可选项。
 

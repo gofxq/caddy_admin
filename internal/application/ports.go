@@ -102,6 +102,10 @@ type SetupProbe interface {
 	ExternalConsole(context.Context, string, string) bool
 }
 
+type SetupDoH interface {
+	Check(context.Context, string, string) (SetupDNSReport, error)
+}
+
 type CertificateQuery struct {
 	Domains      []string
 	ProbeAddress string
