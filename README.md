@@ -2,6 +2,8 @@
 
 > Caddy 反向代理控制台，用于个人 Homelab、小型内网或单管理员的自托管环境。
 
+## 直接打开[在线 Demo](https://caddy-admin-seven.vercel.app)体验功能。
+
 ### 用单容器完成内网所有服务的 https 配置和管理，为 NAS、影音、开发工具等服务提供统一域名和 HTTPS 入口。
 
 ## 一个🌰
