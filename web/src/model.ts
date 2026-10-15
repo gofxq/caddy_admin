@@ -1,9 +1,12 @@
-export interface Service {id:string;name:string;domain_id:string;hostname:string;scheme:'http'|'https';host:string;port:number;enabled:boolean;notes:string;dial:string;updated_at:string}
+export interface HeaderRule {name:string;operation:'set'|'add'|'delete';value?:string}
+export interface ServiceAdvanced {compression?:'off'|'gzip'|'zstd_gzip';request_headers?:HeaderRule[];response_headers?:HeaderRule[];dial_timeout?:string;response_header_timeout?:string;snippet?:string}
+export interface ServiceCheck {revision:number;service:Service;effective:ServiceAdvanced;config:unknown;simulated?:boolean}
+export interface Service {advanced?:ServiceAdvanced;id:string;name:string;domain_id:string;hostname:string;scheme:'http'|'https'|'h2c'|'grpcs';host:string;port:number;enabled:boolean;notes:string;dial:string;updated_at:string}
 export interface Session {username:string;csrf:string;must_change:boolean;expires:number}
 export interface ServiceList {revision:number;services:Service[];published:Service[]}
 export interface Change {kind:string;hostname:string;before?:Service;after?:Service}
 export interface Deployment {id:string;version:number;revision:number;status:string;services:Service[];base_hash:string;hash:string;actor:string;created:string;finished:string;error:string;rollback_id:string;changes:Change[]}
-export interface Preview {settings:ManagedSettings;active_settings:ManagedSettings;settings_changed:boolean;revision:number;services:Service[];changes:Change[];config:unknown;hash:string;runtime_hash:string;expected_hash:string;drift:boolean;validation_id:string;validation_expires_at:string;rollback_id:string;rollback_config?:unknown;rollback_hash?:string;config_redacted_fields?:string[];rollback_config_redacted_fields?:string[]}
+export interface Preview {runtime_config:unknown;runtime_read_at:string;runtime_config_redacted_fields?:string[];settings:ManagedSettings;active_settings:ManagedSettings;settings_changed:boolean;revision:number;services:Service[];changes:Change[];config:unknown;hash:string;runtime_hash:string;expected_hash:string;drift:boolean;validation_id:string;validation_expires_at:string;rollback_id:string;rollback_config?:unknown;rollback_hash?:string;config_redacted_fields?:string[];rollback_config_redacted_fields?:string[]}
 export interface Overview {reachable:boolean;drift:boolean;runtime_hash:string;expected_hash:string;version:number;enabled:number;draft_revision:number;unpublished:boolean;message:string;recent:Deployment[];checked_at:string}
 export interface CertificateStatus {mode:'bootstrap_internal'|'cloudflare';activation_status:'idle'|'applying'|'uncertain'|'failed'|'success';public_status:'unknown'|'pending'|'ready'|'error';last_error_class:string;updated_at:string}
 export interface ManagedDomain {id:string;name:string;access:'trusted'|'internet'|null}
@@ -15,7 +18,7 @@ export interface Certificate {subject:string;status:string;message:string;sans:s
 export interface Audit {id:number;time:string;actor:string;action:string;object:string;result:string;revision:number;version:number;rollback_id:string;error_class:string}
 export interface Page<T>{items:T[];offset:number;limit:number}
 export function upstream(s:Service){return `${s.scheme}://${s.host.includes(':')?`[${s.host}]`:s.host}:${s.port}`}
-export function serviceState(s:Service,published:Service[]){const p=published.find(x=>x.id===s.id);if(!p)return '待首次发布';return (['name','domain_id','hostname','scheme','host','port','enabled','notes','dial'] as const).some(k=>s[k]!==p[k])?'未发布修改':'已生效'}
+export function serviceState(s:Service,published:Service[]){const p=published.find(x=>x.id===s.id);if(!p)return '待首次发布';return (['name','domain_id','hostname','scheme','host','port','enabled','notes','dial'] as const).some(k=>s[k]!==p[k])||JSON.stringify(s.advanced)!==JSON.stringify(p.advanced)?'未发布修改':'已生效'}
 export function filterServices(services:Service[],keyword:string,domainID:string,state:string){return services.filter(s=>(`${s.name} ${s.hostname} ${s.host}`.toLowerCase().includes(keyword.toLowerCase()))&&(!domainID||s.domain_id===domainID)&&(!state||s.enabled===(state==='enabled')))}
 export const statusLabel:Record<string,string>={success:'发布成功',failed:'发布失败',applying:'正在发布',uncertain:'待核对',valid:'证书有效',warning:'即将到期',invalid:'证书异常',unknown:'无法检测',added:'新增',deleted:'删除',updated:'修改',enabled:'启用',disabled:'停用'}
 export function date(value:string){return value?new Date(value).toLocaleString('zh-CN',{hour12:false}):'—'}
@@ -34,3 +37,5 @@ export interface Alert {id:string;service_id:string;kind:string;status:'active'|
 export interface Diagnostics {domain_id:string;checked_at:string;vantage:'manager';checks:{name:string;status:'pass'|'fail'|'unknown';message:string;values:string[]}[];events:AccessEvent[]}
 
 export interface PortalService {name:string;hostname:string;url:string}
+
+export function serviceAdvancedSummary(s:Service){const a=s.advanced;if(!a)return '使用默认配置';const labels=[a.compression&&a.compression!=='off'?a.compression==='gzip'?'gzip 压缩':'zstd + gzip 压缩':'',a.request_headers?.length?`${a.request_headers.length} 条请求头`:'',a.response_headers?.length?`${a.response_headers.length} 条响应头`:'',a.dial_timeout?`连接 ${a.dial_timeout}`:'',a.response_header_timeout?`响应头 ${a.response_header_timeout}`:'',a.snippet?'自定义片段':''];return labels.filter(Boolean).join(' · ')||'使用默认配置'}

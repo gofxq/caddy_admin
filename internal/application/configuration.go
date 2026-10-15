@@ -15,14 +15,15 @@ const MaxConfigurationBytes = 60 << 10
 
 // PortableService contains editable business data, never identifiers or resolved addresses.
 type PortableService struct {
-	Name     string `json:"name"`
-	DomainID string `json:"domain_id"`
-	Hostname string `json:"hostname"`
-	Scheme   string `json:"scheme"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Enabled  bool   `json:"enabled"`
-	Notes    string `json:"notes"`
+	Advanced *domain.ServiceAdvanced `json:"advanced,omitempty"`
+	Name     string                  `json:"name"`
+	DomainID string                  `json:"domain_id"`
+	Hostname string                  `json:"hostname"`
+	Scheme   string                  `json:"scheme"`
+	Host     string                  `json:"host"`
+	Port     int                     `json:"port"`
+	Enabled  bool                    `json:"enabled"`
+	Notes    string                  `json:"notes"`
 }
 
 type Configuration struct {
@@ -39,7 +40,7 @@ type ConfigurationPreview struct {
 }
 
 func portableService(value domain.Service) PortableService {
-	return PortableService{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes}
+	return PortableService{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes, Advanced: value.Advanced}
 }
 
 func (service *Service) ExportConfiguration(ctx context.Context) (Configuration, error) {
@@ -101,7 +102,7 @@ func (service *Service) normalizeImportedServices(ctx context.Context, settings 
 		ids[value.Hostname] = value.ID
 	}
 	for index, value := range values {
-		candidate, normalizeErr := domain.NormalizeService(ctx, policy, domain.Service{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes})
+		candidate, normalizeErr := domain.NormalizeService(ctx, policy, domain.Service{Name: value.Name, DomainID: value.DomainID, Hostname: value.Hostname, Scheme: value.Scheme, Host: value.Host, Port: value.Port, Enabled: value.Enabled, Notes: value.Notes, Advanced: value.Advanced})
 		if normalizeErr != nil {
 			return nil, domain.Invalid(fmt.Sprintf("导入的第 %d 个服务无效：%s", index+1, normalizeErr.Error()))
 		}

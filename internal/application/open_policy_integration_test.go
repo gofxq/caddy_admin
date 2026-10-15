@@ -85,3 +85,83 @@ func TestOpenDefaultsAllowFirstNamedServiceButStillRequireExposureConfirmation(t
 		t.Fatalf("recovery changed draft: %+v %v", retained, err)
 	}
 }
+
+func TestServiceAdvancedCheckIsReadOnlyAndPreservesOptionsAcrossImport(t *testing.T) {
+	ctx := context.Background()
+	svc, store, caddy, snapshot, settings := policyFixture(t)
+	settings.Domains[0].Access = domain.DomainAccess("internet")
+	settings.UpstreamCIDRs = []string{"10.0.0.0/8"}
+	draft, err := svc.SaveSettings(ctx, 0, settings, true, "admin", "203.0.113.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := string(caddy.raw)
+	startup := string(snapshot.raw)
+	candidate := domain.Service{Name: "Advanced", DomainID: "home", Hostname: "advanced.example.com", Host: "10.0.0.8", Port: 50051, Scheme: "h2c", Enabled: true, Advanced: &domain.ServiceAdvanced{Snippet: "reverse_proxy {\n transport http {\n dial_timeout 5s\n }\n}"}}
+	checked, err := svc.CheckService(ctx, draft.Revision, candidate)
+	if err != nil || checked.Effective.DialTimeout != "5s" || !strings.Contains(string(checked.Config), "h2c") {
+		t.Fatalf("check=%+v %v", checked, err)
+	}
+	after, _ := store.Draft(ctx)
+	if !reflect.DeepEqual(after, draft) || string(caddy.raw) != original || string(snapshot.raw) != startup {
+		t.Fatal("check changed draft or runtime")
+	}
+	if _, err = svc.CheckService(ctx, draft.Revision-1, candidate); err == nil {
+		t.Fatal("stale check accepted")
+	}
+	saved, err := svc.SaveService(ctx, draft.Revision, candidate, false, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := svc.ExportConfiguration(ctx)
+	if err != nil || !reflect.DeepEqual(exported.Services[0].Advanced, candidate.Advanced) {
+		t.Fatalf("export lost advanced: %+v %v", exported, err)
+	}
+	imported, err := svc.ImportConfiguration(ctx, exported, saved.Revision, true, "admin")
+	if err != nil || !reflect.DeepEqual(imported.Services[0].Advanced, candidate.Advanced) {
+		t.Fatalf("import lost advanced: %+v %v", imported, err)
+	}
+	history, _ := store.DraftRevision(ctx, saved.Revision)
+	if !reflect.DeepEqual(history.Services[0].Advanced, candidate.Advanced) {
+		t.Fatal("history changed")
+	}
+	// Publish, change the advanced options, and roll back without overwriting
+	// the newer draft. All candidate generation goes through the same parser.
+	publishPolicy(t, svc, imported.Revision, "advanced-first-publish", "203.0.113.9", true)
+	versions, err := svc.Deployments(ctx, 0, 10)
+	if err != nil || len(versions) != 1 {
+		t.Fatalf("versions=%+v %v", versions, err)
+	}
+	firstID := versions[0].ID
+	edited := imported.Services[0]
+	edited.Advanced = &domain.ServiceAdvanced{DialTimeout: "9s"}
+	newDraft, err := svc.SaveService(ctx, imported.Revision, edited, false, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishPolicy(t, svc, newDraft.Revision, "advanced-second-publish", "203.0.113.9", false)
+	if !strings.Contains(string(snapshot.raw), "9000000000") {
+		t.Fatal("changed timeout not published")
+	}
+	rollback, err := svc.Validate(ctx, newDraft.Revision, firstID, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := svc.Begin(ctx, domain.PublishRequest{Revision: rollback.Revision, ValidationID: rollback.ValidationID, ExpectedHash: rollback.RuntimeHash, ClientAddress: "203.0.113.9", Idempotency: "advanced-rollback", ConfirmExposure: true}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Apply(deployment.ID)
+	rolled, err := svc.Deployment(ctx, deployment.ID)
+	if err != nil || rolled.Status != "success" || !strings.Contains(string(snapshot.raw), "5000000000") || strings.Contains(string(snapshot.raw), "9000000000") {
+		t.Fatalf("advanced rollback failed: %+v %v", rolled, err)
+	}
+	retained, err := store.Draft(ctx)
+	if err != nil || !reflect.DeepEqual(retained, newDraft) {
+		t.Fatal("rollback overwrote newer advanced draft", err)
+	}
+	candidate.Advanced.Snippet = "reverse_proxy localhost:2019"
+	if _, err = svc.CheckService(ctx, newDraft.Revision, candidate); err == nil {
+		t.Fatal("unsafe custom upstream accepted")
+	}
+}

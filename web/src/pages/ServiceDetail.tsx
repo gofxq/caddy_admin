@@ -3,7 +3,7 @@ import {useEffect,useRef,useState} from 'react'
 import {useMutation,useQuery} from '@tanstack/react-query'
 import {Link} from '@tanstack/react-router'
 import {api} from '../api'
-import {accessLabel,date,upstream,type ManagedDomain,type Service,type ServiceDetail as Detail,type UpstreamCheck} from '../model'
+import {accessLabel,date,upstream,serviceAdvancedSummary,type ManagedDomain,type Service,type ServiceDetail as Detail,type UpstreamCheck} from '../model'
 import {Badge,Empty,ErrorBox,Heading,Loading,Status} from '../components/shared'
 import {Button} from '../components/ui/button'
 
@@ -17,6 +17,7 @@ function ConfigurationCard({title,service,domain}:{title:string;service:Service|
    <div><dt>上游</dt><dd><code>{upstream(service)}</code></dd></div>
    <div><dt>已校验地址快照</dt><dd><code>{service.dial||'发布前解析'}</code></dd></div>
    <div><dt>配置状态</dt><dd><Badge tone={service.enabled?'green':'neutral'}>{service.enabled?'启用':'停用'}</Badge></dd></div>
+   <div><dt>高级配置</dt><dd>{serviceAdvancedSummary(service)}{service.advanced&&<details className="json-details"><summary>查看选项与原始片段</summary><pre>{JSON.stringify(service.advanced,null,2)}</pre></details>}</dd></div>
    {service.notes&&<div><dt>备注</dt><dd>{service.notes}</dd></div>}
   </dl>:<Empty title={title==='服务草稿'?'草稿中没有此服务':'尚未发布'}>{title==='服务草稿'?'已发布路由在确认发布删除前仍保留。':'保存草稿后，到发布页面预览、校验并确认。'}</Empty>}
  </section>

@@ -3,13 +3,14 @@ import {useEffect,useState} from 'react'
 import {useMutation,useQuery,useQueryClient} from '@tanstack/react-query'
 import {Link} from '@tanstack/react-router'
 import {api} from '../api'
-import {type Preview,type Deployment,type Page,type Service,exposureChanges,upstream,statusLabel,date} from '../model'
+import {type Preview,type Deployment,type Page,type Service,exposureChanges,upstream,serviceAdvancedSummary,statusLabel,date} from '../model'
 import {Button} from '../components/ui/button'
 import {Dialog} from '../components/ui/dialog'
 import {Heading,Loading,ErrorBox,Empty,Badge,History,Pager} from '../components/shared'
+import {CaddyConfigPreview,ConfigPrivacyNotice} from '../components/CaddyConfigPreview'
 
-function ConfigPrivacyNotice(){return <p className="notice notice-neutral">为保护部署凭据，管理接口与证书存储配置已隐藏；这里的 JSON 不能直接用于恢复，运行指纹仍按完整配置计算。</p>}
-function serviceDescription(s?:Service){return s?`${s.hostname} · ${upstream(s)} · ${s.enabled?'启用':'停用'} · 名称：${s.name} · 备注：${s.notes||'无'}`:'未配置'}
+function serviceDescription(s?:Service){return s?`${s.hostname} · ${upstream(s)} · ${s.enabled?'启用':'停用'} · 名称：${s.name} · 备注：${s.notes||'无'} · 高级：${serviceAdvancedSummary(s)}`:'未配置'}
+function AdvancedDiff({service,label}:{service?:Service;label:string}){return service?.advanced?<details className="json-details"><summary>{label}的高级配置</summary><pre>{JSON.stringify(service.advanced,null,2)}</pre></details>:null}
 function DeploymentTask({deployment,error,onRefresh,onDetail}:{deployment?:Deployment;error:unknown;onRefresh:()=>void;onDetail:(id:string)=>void}){
  if(!deployment)return null
  const content={
@@ -58,11 +59,11 @@ export function Deployments(){
   {preview.isPending?<Loading/>:p&&<section className="card">
    <div className="section-heading"><div><h2>变更预览 <Badge>{p.changes.length} 项变更</Badge></h2><p>草稿 r{p.revision} · {rollback?'按当前策略重新发布历史服务':'与当前已发布业务模型比较'}</p></div><Badge tone={canPublish?'green':'amber'}>{canPublish?(isStaticDemo?'模拟配置校验通过':'真实配置校验通过'):'等待校验'}</Badge></div>
    {p.drift&&<div className="notice notice-amber inset">检测到外部配置漂移。当前指纹 {p.runtime_hash.slice(0,12)}，期望 {p.expected_hash.slice(0,12)}。发布将完整覆盖运行配置。</div>}
-   {p.changes.length?<div className="changes">{p.changes.map((c,i)=><div className="change-row" key={i}><Badge>{statusLabel[c.kind]??c.kind}</Badge><div><strong>{c.hostname}</strong><small>之前：{serviceDescription(c.before)}</small><small>之后：{serviceDescription(c.after)}</small></div></div>)}</div>:<Empty title="没有服务变更" action={<Link className="button button-outline" to="/services">前往服务</Link>}>可以校验当前配置，或先编辑草稿。</Empty>}
+   {p.changes.length?<div className="changes">{p.changes.map((c,i)=><div className="change-row" key={i}><Badge>{statusLabel[c.kind]??c.kind}</Badge><div><strong>{c.hostname}</strong><small>之前：{serviceDescription(c.before)}</small><AdvancedDiff service={c.before} label="之前"/><small>之后：{serviceDescription(c.after)}</small><AdvancedDiff service={c.after} label="之后"/></div></div>)}</div>:<Empty title="没有服务变更" action={<Link className="button button-outline" to="/services">前往服务</Link>}>可以校验当前配置，或先编辑草稿。</Empty>}
    {p.settings_changed&&<div className="changes"><h3>设置变更</h3>{(['domains','admin_domain','console_lan_only','lan_cidrs','upstream_cidrs','allowed_names','denied_ips','resolvers','metrics_enabled','access_logs_enabled','alerts_enabled','upstream_checks_enabled'] as const).filter(k=>JSON.stringify(p.settings[k])!==JSON.stringify(p.active_settings[k])).map(k=><div className="change-row" key={k}><strong>{({domains:'域名与访问范围',admin_domain:'控制台',console_lan_only:'控制台来源限制',lan_cidrs:'可信网络',upstream_cidrs:'上游许可',allowed_names:'许可服务名',denied_ips:'禁止目标',resolvers:'服务器 DNS',metrics_enabled:'业务指标与流量趋势',access_logs_enabled:'脱敏日志与签发线索',alerts_enabled:'站内告警',upstream_checks_enabled:'后台 TCP 检查'})[k]}</strong><div><small>之前：{JSON.stringify(p.active_settings[k])}</small><small>之后：{JSON.stringify(p.settings[k])}</small></div></div>)}</div>}
-   {!!(p.config_redacted_fields?.length||p.rollback_config_redacted_fields?.length)&&<ConfigPrivacyNotice/>}
+   {!!p.rollback_config_redacted_fields?.length&&<ConfigPrivacyNotice/>}
    {p.rollback_config!==undefined&&<details className="json-details" open><summary>历史快照与当前策略候选{p.rollback_hash!==p.hash?'存在差异':'相同'}</summary><p>历史指纹：{p.rollback_hash} · 候选指纹：{p.hash}</p><h3>原始历史快照</h3><pre>{JSON.stringify(p.rollback_config,null,2)}</pre><h3>按当前策略生成的候选</h3><pre>{JSON.stringify(p.config,null,2)}</pre></details>}
-   <details className="json-details"><summary>生成的 Caddy JSON · 只读</summary><pre>{JSON.stringify(p.config,null,2)}</pre></details>
+   <CaddyConfigPreview runtimeConfig={p.runtime_config} config={p.config} runtimeHash={p.runtime_hash} hash={p.hash} readAt={p.runtime_read_at} redactedFields={p.config_redacted_fields} runtimeRedactedFields={p.runtime_config_redacted_fields} stale={preview.isError}/>
    {validated&&<p>校验有效期至 {date(validated.validation_expires_at)}</p>}
    {reason&&<p role="status" className="notice notice-amber">{reason}</p>}
    <div className="release-actions"><span className="muted">热加载完整配置 · 无需重启 Caddy</span><Button variant="outline" disabled={preview.isError||validate.isPending||publish.isPending||locked} onClick={()=>validate.mutate()}>{validate.isPending?'Caddy 校验中…':'校验配置'}</Button><Button disabled={!canPublish} onClick={()=>{setConfirmDrift(false);setConfirmExposure(false);setConfirm(true)}}>确认发布</Button></div>

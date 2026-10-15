@@ -31,13 +31,18 @@ describe('local mock API', () => {
 
     const checked = mock.handle('POST', '/draft/validate', { revision: edited.revision, rollback_id: '' }).body as Preview
     expect(checked.validation_id).toBeTruthy()
+    expect(checked.runtime_config).toBeDefined()
+    expect(checked.runtime_config).not.toEqual(checked.config)
+    expect(Number.isFinite(Date.parse(checked.runtime_read_at))).toBe(true)
     const release = mock.handle('POST', '/deployments', { validation_id: checked.validation_id, revision: checked.revision, expected_hash: checked.runtime_hash }).body as Deployment
     expect(release.status).toBe('applying')
     mock.handle('GET', `/deployments/${release.id}`)
     const finished=mock.handle('GET', `/deployments/${release.id}`).body as {deployment:Deployment}
     expect(finished.deployment.status).toBe('success')
     expect((mock.handle('GET', '/services').body as ServiceList).published.some(item => item.hostname === service.hostname)).toBe(true)
-    expect((mock.handle('GET', '/draft/preview').body as Preview).changes).toHaveLength(0)
+    const after=mock.handle('GET', '/draft/preview').body as Preview
+    expect(after.changes).toHaveLength(0)
+    expect(after.runtime_config).toEqual(after.config)
   })
 
   it('can simulate failed and uncertain terminal deployments',()=>{
@@ -128,4 +133,20 @@ it('keeps the anonymous guide on published data and hides it during an unresolve
  expect(mock.handle('GET','/portal').status).toBe(503)
  mock.handle('GET',`/deployments/${release.id}`);mock.handle('GET',`/deployments/${release.id}`)
  expect(JSON.stringify(mock.handle('GET','/portal').body)).toContain('仅草稿名称')
+})
+
+it('checks advanced input without saving and keeps options in export and business diff',()=>{
+ const mock=createMockApi(),before=mock.handle('GET','/services').body as ServiceList
+ const candidate:Service={...before.services[0],scheme:'grpcs',advanced:{dial_timeout:'5s',request_headers:[{name:'X-App',operation:'set',value:'photos'}],snippet:'header X-Frame-Options SAMEORIGIN'}}
+ const check=mock.handle('POST','/services/check',{revision:before.revision,service:candidate})
+ expect(check.status).toBe(200);expect(check.body).toMatchObject({simulated:true,effective:candidate.advanced})
+ expect(JSON.stringify(check.body)).toContain('server_name')
+ expect(JSON.stringify(check.body)).toContain('dial_timeout')
+ expect(mock.handle('GET','/services').body).toEqual(before)
+ expect(mock.handle('POST','/services/check',{revision:before.revision-1,service:candidate}).status).toBe(409)
+ expect(mock.handle('PUT',`/services/${candidate.id}`,{revision:before.revision,service:candidate}).status).toBe(200)
+ const exported=mock.handle('GET','/configuration/export').body as {services:Service[]}
+ expect(exported.services.find(s=>s.hostname===candidate.hostname)?.advanced).toEqual(candidate.advanced)
+ const preview=mock.handle('GET','/draft/preview').body as Preview
+ expect(preview.changes.find(c=>c.after?.id===candidate.id)?.after?.advanced).toEqual(candidate.advanced)
 })

@@ -152,8 +152,18 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 	if base == "" || !OneLevel(service.Hostname, base) || service.Hostname == policy.AdminDomain || (policy.PreviousAdminDomain != "" && service.Hostname == policy.PreviousAdminDomain) {
 		return service, Invalid("域名必须为所选域名的一层子域且不能占用控制台")
 	}
-	if service.Scheme != "http" && service.Scheme != "https" {
-		return service, Invalid("上游协议必须为 http 或 https")
+	if service.Scheme != "http" && service.Scheme != "https" && service.Scheme != "h2c" && service.Scheme != "grpcs" {
+		return service, Invalid("上游协议必须为 HTTP、HTTPS、gRPC 明文或 gRPC TLS")
+	}
+	if _, err := EffectiveServiceAdvanced(service); err != nil {
+		return service, err
+	}
+	if service.Advanced != nil {
+		copy := *service.Advanced
+		copy.Snippet = strings.TrimSpace(copy.Snippet)
+		copy.RequestHeaders = append([]HeaderRule(nil), copy.RequestHeaders...)
+		copy.ResponseHeaders = append([]HeaderRule(nil), copy.ResponseHeaders...)
+		service.Advanced = &copy
 	}
 	if service.Port < 1 || service.Port > 65535 {
 		return service, Invalid("端口必须为 1–65535")

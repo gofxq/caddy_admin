@@ -6,21 +6,23 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
 )
 
 type Service struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	DomainID  string `json:"domain_id"`
-	Hostname  string `json:"hostname"`
-	Scheme    string `json:"scheme"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Enabled   bool   `json:"enabled"`
-	Notes     string `json:"notes"`
-	Dial      string `json:"dial"`
-	UpdatedAt string `json:"updated_at"`
+	Advanced  *ServiceAdvanced `json:"advanced,omitempty"`
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	DomainID  string           `json:"domain_id"`
+	Hostname  string           `json:"hostname"`
+	Scheme    string           `json:"scheme"`
+	Host      string           `json:"host"`
+	Port      int              `json:"port"`
+	Enabled   bool             `json:"enabled"`
+	Notes     string           `json:"notes"`
+	Dial      string           `json:"dial"`
+	UpdatedAt string           `json:"updated_at"`
 }
 
 type Draft struct {
@@ -103,7 +105,7 @@ func Diff(before, after []Service) []Change {
 		} else {
 			comparableOld, comparableNew := old, service
 			comparableOld.UpdatedAt, comparableNew.UpdatedAt = "", ""
-			if comparableOld != comparableNew {
+			if !reflect.DeepEqual(comparableOld, comparableNew) {
 				kind := "updated"
 				if old.Enabled != service.Enabled {
 					kind = "disabled"

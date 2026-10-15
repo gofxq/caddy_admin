@@ -6,7 +6,7 @@ import {api} from './api'
 vi.mock('./api',async importOriginal=>({...await importOriginal<typeof import('./api')>(),api:vi.fn()}))
 afterEach(()=>{cleanup();vi.resetAllMocks()})
 const service={id:'one',name:'Name',hostname:'new.home.example.com',scheme:'http',host:'10.77.0.8',port:80,enabled:true,notes:'new notes'}
-const preview={revision:1,services:[service],changes:[{kind:'updated',hostname:service.hostname,before:{...service,hostname:'old.home.example.com',notes:'old notes'},after:service}],config:{},hash:'candidate',runtime_hash:'base',expected_hash:'base',drift:false,validation_id:'valid',rollback_id:'',validation_expires_at:new Date(Date.now()+900000).toISOString()}
+const preview={revision:1,services:[service],changes:[{kind:'updated',hostname:service.hostname,before:{...service,hostname:'old.home.example.com',notes:'old notes'},after:service}],config:{upstream:'10.0.0.9:80'},runtime_config:{upstream:'10.0.0.8:80'},runtime_read_at:'2026-10-15T12:00:00Z',hash:'candidate',runtime_hash:'base',expected_hash:'base',drift:false,validation_id:'valid',rollback_id:'',validation_expires_at:new Date(Date.now()+900000).toISOString()}
 function setup(expires=preview.validation_expires_at){const qc=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});vi.mocked(api).mockImplementation(async path=>path==='/draft/validate'?{...preview,validation_expires_at:expires}:path.startsWith('/draft/preview')?preview:{items:[]});render(<QueryClientProvider client={qc}><Deployments/></QueryClientProvider>);return qc}
 it('disables publishing expired validation',async()=>{setup(new Date(Date.now()-1).toISOString());fireEvent.click(await screen.findByText('校验配置'));await waitFor(()=>expect(api).toHaveBeenCalledWith('/draft/validate',expect.anything()));await screen.findByText(/校验已到期/);expect(screen.getByRole('button',{name:'确认发布'})).toBeDisabled()})
 it('shows old hostname and notes',async()=>{setup();await screen.findByText(/old.home.example.com/);await screen.findByText(/old notes/)})
@@ -15,7 +15,7 @@ it('explains when configuration is redacted instead of presenting it as a recove
  const qc=new QueryClient({defaultOptions:{queries:{retry:false}}})
  vi.mocked(api).mockImplementation(async path=>path.startsWith('/draft/preview')?{...preview,config_redacted_fields:['admin','storage']}:{items:[]})
  render(<QueryClientProvider client={qc}><Deployments/></QueryClientProvider>)
- await screen.findByText(/管理接口与证书存储配置已隐藏/)
+ await screen.findByText(/敏感值已替换为/)
  expect(screen.getByText(/不能直接用于恢复/)).toBeInTheDocument()
 })
 
@@ -125,4 +125,26 @@ it('previews all observation flag changes before publication',async()=>{
  render(<QueryClientProvider client={qc}><Deployments/></QueryClientProvider>)
  expect(await screen.findByText('业务指标与流量趋势')).toBeInTheDocument()
  expect(screen.getByText('脱敏日志与签发线索')).toBeInTheDocument();expect(screen.getByText('站内告警')).toBeInTheDocument();expect(screen.getByText('后台 TCP 检查')).toBeInTheDocument()
+})
+
+
+it('shows actual running JSON and keeps a stale warning after refresh failure',async()=>{
+ const qc=setup()
+ fireEvent.click(await screen.findByRole('tab',{name:'当前运行配置'}))
+ expect(screen.getByRole('tabpanel')).toHaveTextContent('10.0.0.8:80')
+ vi.mocked(api).mockRejectedValue(new Error('runtime offline'))
+ await qc.invalidateQueries({queryKey:['preview']})
+ expect(await screen.findByText(/以下是上次成功读取的配置/)).toBeInTheDocument()
+ expect(screen.getByRole('tabpanel')).toHaveTextContent('10.0.0.8:80')
+ expect(screen.getByRole('button',{name:'确认发布'})).toBeDisabled()
+})
+
+it('replaces the displayed comparison with the configuration returned by validation',async()=>{
+ setup()
+ await screen.findByRole('tab',{name:'发布前对比'})
+ vi.mocked(api).mockImplementation(async path=>path==='/draft/validate'?{...preview,config:{upstream:'10.0.0.10:80'},hash:'validated-candidate'}:path.startsWith('/draft/preview')?preview:{items:[]})
+ fireEvent.click(screen.getByRole('button',{name:'校验配置'}))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'确认发布'})).toBeEnabled())
+ fireEvent.click(screen.getByRole('tab',{name:'待发布配置'}))
+ expect(screen.getByRole('tabpanel')).toHaveTextContent('10.0.0.10:80')
 })

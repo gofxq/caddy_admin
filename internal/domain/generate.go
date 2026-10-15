@@ -130,11 +130,10 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		if service.Dial == "" {
 			return nil, fmt.Errorf("missing validated upstream")
 		}
-		proxy := object{"handler": "reverse_proxy", "upstreams": []any{object{"dial": service.Dial}}}
-		if service.Scheme == "https" {
-			proxy["transport"] = object{"protocol": "http", "tls": object{"server_name": service.Host}}
+		handlers, err := serviceProxy(service)
+		if err != nil {
+			return nil, err
 		}
-		handlers := []any{proxy}
 		if observed {
 			handlers = append([]any{observe(service)}, handlers...)
 		}

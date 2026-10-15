@@ -1,6 +1,6 @@
 import type {Change,Service,Settings} from './model.ts'
 export const MAX_CONFIGURATION_BYTES=60*1024
-export type PortableService=Pick<Service,'name'|'domain_id'|'hostname'|'scheme'|'host'|'port'|'enabled'|'notes'>
+export type PortableService=Pick<Service,'name'|'domain_id'|'hostname'|'scheme'|'host'|'port'|'enabled'|'notes'|'advanced'>
 export type Configuration={format:'caddy-web-admin';version:2;settings:Omit<Settings['config'],'test_tls'>;services:PortableService[]}
 export type ConfigurationPreview={revision:number;services:Service[];changes:Change[]}
 const invalid=()=>new Error('配置文件格式无效；请上传本项目导出的 JSON 文件。')
@@ -20,9 +20,20 @@ export function parseConfiguration(raw:string):Configuration{
  if(typeof settings.console_lan_only!=='boolean'||!Array.isArray(settings.domains))throw invalid()
  for(const item of settings.domains){const d=record(item,['id','name','access']);if(typeof d.id!=='string'||typeof d.name!=='string'||!(d.access===null||d.access==='trusted'||d.access==='internet'))throw invalid()}
  if(!Array.isArray(value.services))throw invalid()
- for(const item of value.services){const service=record(item,['name','domain_id','hostname','scheme','host','port','enabled','notes']);if(['name','hostname','host','notes'].some(k=>typeof service[k]!=='string')||typeof service.domain_id!=='string'||!['http','https'].includes(service.scheme as string)||typeof service.enabled!=='boolean'||!Number.isInteger(service.port)||(service.port as number)<1||(service.port as number)>65535)throw invalid()}
+ for(const item of value.services){const advancedKeys=item&&typeof item==='object'&&'advanced' in item?['advanced']:[];const service=record(item,['name','domain_id','hostname','scheme','host','port','enabled','notes',...advancedKeys]);if(advancedKeys.length)validateAdvanced(service.advanced);if(['name','hostname','host','notes'].some(k=>typeof service[k]!=='string')||typeof service.domain_id!=='string'||!['http','https','h2c','grpcs'].includes(service.scheme as string)||typeof service.enabled!=='boolean'||!Number.isInteger(service.port)||(service.port as number)<1||(service.port as number)>65535)throw invalid()}
  return value as unknown as Configuration
 }
 export function setupConfiguration(value:Configuration){const s=value.settings;if(s.previous_admin_domain||s.previous_origin)throw new Error('控制台交接尚未完成，不能通过初始化导入；请完成交接后重新导出。');const first=s.domains.find(d=>s.admin_domain===`caddyadmin.${d.name}`);if(!first||s.origin!==`https://${s.admin_domain}`)throw new Error('该文件的自定义控制台地址暂不支持通过初始化导入；请使用标准控制台地址。');return {domain:first.name,resolvers:s.resolvers}}
 export async function readConfiguration(file:File):Promise<Configuration>{if(file.size>MAX_CONFIGURATION_BYTES)throw new Error('配置文件不得超过 60 KiB。');const raw=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('无法读取配置文件，请重新选择。'));reader.readAsText(file)});return parseConfiguration(raw)}
 export function downloadConfiguration(value:Configuration){const raw=JSON.stringify(value);parseConfiguration(raw);const url=URL.createObjectURL(new Blob([raw],{type:'application/json'}));try{const link=document.createElement('a');link.href=url;link.download=`caddy-admin-config-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;link.click()}finally{URL.revokeObjectURL(url)}}
+
+function validateAdvanced(value:unknown){
+ if(!value||typeof value!=='object'||Array.isArray(value))throw invalid()
+ const a=value as Record<string,unknown>,keys=['compression','request_headers','response_headers','dial_timeout','response_header_timeout','snippet']
+ if(Object.keys(a).some(k=>!keys.includes(k)))throw invalid()
+ if(a.compression!==undefined&&!['off','gzip','zstd_gzip'].includes(a.compression as string))throw invalid()
+ for(const k of ['dial_timeout','response_header_timeout','snippet'])if(a[k]!==undefined&&typeof a[k]!=='string')throw invalid()
+ if(typeof a.snippet==='string'&&new TextEncoder().encode(a.snippet).byteLength>4096)throw invalid()
+ for(const k of ['request_headers','response_headers'])if(a[k]!==undefined){if(!Array.isArray(a[k])||a[k].length>32)throw invalid();for(const h of a[k]){if(!h||typeof h!=='object'||Array.isArray(h)||Object.keys(h).some(key=>!['name','operation','value'].includes(key))||typeof h.name!=='string'||!['set','add','delete'].includes(h.operation)||h.value!==undefined&&typeof h.value!=='string')throw invalid()}}
+}
+export function portableService(s:Service):PortableService{const {name,domain_id,hostname,scheme,host,port,enabled,notes,advanced}=s;return {name,domain_id,hostname,scheme,host,port,enabled,notes,...(advanced?{advanced}: {})}}

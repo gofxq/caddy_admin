@@ -26,6 +26,8 @@ type Deployment struct {
 }
 
 type Preview struct {
+	RuntimeConfig       json.RawMessage `json:"-"`
+	RuntimeReadAt       time.Time       `json:"runtime_read_at"`
 	Settings            ManagedSettings `json:"settings"`
 	ActiveSettings      ManagedSettings `json:"active_settings"`
 	SettingsChanged     bool            `json:"settings_changed"`

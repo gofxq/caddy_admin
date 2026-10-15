@@ -84,6 +84,7 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 | GET | `/services` | `{revision,services,published}`，同时返回草稿与已发布业务模型 |
 | GET | `/services/{id}` | 服务详情，分别返回草稿、已发布配置、运行核对和最近相关发布 |
 | POST | `/services/{id}/check-upstream` | `{expected_hash,expected_deployment_id}`；手动 TCP 检查已发布地址快照，不接受客户端指定目标 |
+| POST | `/services/check` | `{revision,service}`；只读检查未保存服务，返回规范化输入、有效选项及完整候选 JSON，调用本地真实 Caddy；不创建发布校验令牌 |
 | POST | `/services` | `{revision,service}`；服务 ID 由后端生成 |
 | PUT | `/services/{id}` | `{revision,service}`；完整更新服务草稿 |
 | DELETE | `/services/{id}` | `{revision}`；仅删除草稿中的服务 |
@@ -123,7 +124,26 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 }
 ```
 
-输出还包含 `id`、`dial`、`updated_at`；这些字段由服务器维护。Hostname 转小写、去除首尾空白与末尾点，规范化后全局唯一。名称限制 100 字节、备注 2000 字节。协议只允许 HTTP/HTTPS，端口 1–65535；禁用服务也必须保留合法配置。
+输出还包含 `id`、`dial`、`updated_at`；这些字段由服务器维护。Hostname 转小写、去除首尾空白与末尾点，规范化后全局唯一。名称限制 100 字节、备注 2000 字节。协议允许 `http|https|h2c|grpcs`，端口 1–65535；禁用服务也必须保留合法配置。
+
+`advanced` 为可选对象，未提供时保持原有行为：
+
+```json
+{
+  "advanced": {
+    "compression": "zstd_gzip",
+    "request_headers": [{"name":"X-App","operation":"set","value":"photos"}],
+    "response_headers": [{"name":"Server","operation":"delete"}],
+    "dial_timeout": "5s",
+    "response_header_timeout": "1m",
+    "snippet": "header X-Frame-Options SAMEORIGIN"
+  }
+}
+```
+
+所有字段可省略。`compression` 接受空值、`off`、`gzip`、`zstd_gzip`；h2c/grpcs 仅接受关闭。头操作为 `set|add|delete`，删除不能带非空值；名称按 HTTP token 校验，同方向大小写不敏感去重。拒绝常见凭据头、控制字符和动态占位符。每方向最多 32 条，头名最多 128 字节、值最多 2048 字节，超时为 Go duration（大于 0、最多 24 小时）。`snippet` 最多 4096 字节，仅支持[使用指南中的服务级指令](usage.md#服务高级配置)，语法错误包含行号；与结构化字段冲突返回 422，不静默覆盖。HTTPS/grpcs 校验证书，h2c 使用 HTTP/2 明文，grpcs 使用 HTTP/2 TLS，固定 IP 和 TLS 名称不受片段覆盖。
+
+`POST /services/check` 使用与保存一致的服务输入（新建省略/清空 ID，编辑带已有 ID），绑定当前 `revision`；服务会临时按启用状态参与完整候选生成。响应为 `{revision,service,effective,config}`，`effective` 为片段合并后的规范化选项（不含原始片段），`config` 为完整 Caddy JSON 对象。需要管理员会话、精确 Origin、CSRF 及完成密码修改，响应 `Cache-Control: no-store`。服务不存在返回 404，修订冲突、执行中或待核对发布返回 409，配置操作忙碌也返回 409；无效配置返回 422，依赖不可用返回 503。检查不写草稿、历史、快照、线上配置或发布校验令牌；发布页仍须单独校验，外部实例仍须核对远端模块与实际运行状态。
 
 ## 服务详情与手动检查
 
@@ -149,7 +169,11 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 
 `allowed_names` 接受独立 `*` 或合法的精确名称，不支持 `*.example.com` 等其他通配形式；名称目标须匹配许可，全部解析 IP 均须落在 `upstream_cidrs` 并通过受保护目标检查。空名称列表拒绝名称目标，空上游网段拒绝全部目标。配置 v2 导入导出支持 `*`，不补齐已有或导入配置的空列表。
 
-预览包含 `settings`、`active_settings`、`settings_changed`、`revision`、`services`、`changes`、`config`、`hash`、`runtime_hash`、`expected_hash`、`drift`、`rollback_id`。业务变更类型包括 `added`、`deleted`、`updated`、`enabled`、`disabled`，并附带前后服务模型。
+预览包含 `settings`、`active_settings`、`settings_changed`、`revision`、`services`、`changes`、`config`、`runtime_config`、`runtime_read_at`、`hash`、`runtime_hash`、`expected_hash`、`drift`、`rollback_id`。业务变更类型包括 `added`、`deleted`、`updated`、`enabled`、`disabled`，并附带前后服务模型。
+
+`config` 为待发布候选 JSON；`runtime_config` 为此次预览从 Caddy 实际读取的完整配置显示副本，`runtime_read_at` 为读取后的 UTC RFC3339 时间。`GET /draft/preview`（含回滚预览）与 `POST /draft/validate` 均返回这些字段，沿用管理员会话、强制改密及写请求的 Origin/CSRF 校验，响应 `Cache-Control: no-store`。Caddy 读取失败返回错误，不将历史发布或启动快照作为实际运行配置返回。
+
+所有发布预览、校验及发布详情中的配置统一在服务端脱敏：保留 `admin`、`storage` 及其他配置结构，将密码、Token、私钥、认证内容、含凭据 URL 和未知扩展模块参数等敏感叶值替换为 `[REDACTED]`。`config_redacted_fields`、`runtime_config_redacted_fields`、可选 `rollback_config_redacted_fields` 分别给出按字典序排列的 JSON Pointer 路径；路径中的 `~`、`/` 使用 `~0`、`~1` 转义。未知模块保留结构，其参数按保守规则隐藏，不能将显示副本用于恢复。`hash`、`runtime_hash`、`expected_hash`、`rollback_hash` 仍基于原始完整配置，校验记录、发布加载及快照不使用脱敏副本。可见 JSON 相同不表示完整指纹相同。
 
 校验通过后，提交：
 

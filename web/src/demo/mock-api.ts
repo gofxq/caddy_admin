@@ -1,4 +1,4 @@
-import {parseConfiguration} from "../configuration.ts";
+import {parseConfiguration,portableService} from "../configuration.ts";
 import {validNewPassword} from "../password.ts";
 import {exposureChanges,type ManagedSettings} from "../model.ts";
 import type {
@@ -100,7 +100,7 @@ function changes(before: Service[], after: Service[]): Change[] {
       ].some(
         (key) =>
           previous[key as keyof Service] !== current[key as keyof Service],
-      )
+      ) || JSON.stringify(previous.advanced)!==JSON.stringify(current.advanced)
     ) {
       const kind =
         previous.enabled !== current.enabled
@@ -126,6 +126,30 @@ function changes(before: Service[], after: Service[]): Change[] {
   return result;
 }
 
+// The demo renders structured options only. Snippets are retained as input,
+// never claimed to be parsed or validated by a real Caddy instance.
+function serviceHandlers(service:Service){
+ const a=service.advanced??{},transport:Record<string,unknown>={protocol:'http'}
+ if(service.scheme==='https'||service.scheme==='grpcs')transport.tls={server_name:service.host}
+ if(service.scheme==='h2c'||service.scheme==='grpcs')transport.versions=[service.scheme==='h2c'?'h2c':'2']
+ if(a.dial_timeout)transport.dial_timeout=a.dial_timeout
+ if(a.response_header_timeout)transport.response_header_timeout=a.response_header_timeout
+ const headers:Record<string,unknown>={}
+ for(const [direction,rules] of [['request',a.request_headers],['response',a.response_headers]] as const){
+  if(!rules?.length)continue
+  const ops:Record<string,unknown>={}
+  for(const rule of rules){
+   if(rule.operation==='delete')ops.delete=[...(ops.delete as string[]??[]),rule.name]
+   else ops[rule.operation]={...(ops[rule.operation] as object??{}),[rule.name]:[rule.value??'']}
+  }
+  headers[direction]=ops
+ }
+ const proxy={handler:'reverse_proxy',upstreams:[{dial:service.dial||`${service.host.includes(':')?'['+service.host+']':service.host}:${service.port}`}],...(Object.keys(transport).length>1?{transport}:{}),...(Object.keys(headers).length?{headers}:{})}
+ if(!a.compression||a.compression==='off')return [proxy]
+ const prefer=a.compression==='gzip'?['gzip']:['zstd','gzip']
+ return [{handler:'encode',encodings:Object.fromEntries(prefer.map(name=>[name,{}])),prefer},proxy]
+}
+
 function config(services: Service[]) {
   return {
     apps: {
@@ -137,12 +161,7 @@ function config(services: Service[]) {
               .filter((service) => service.enabled)
               .map((service) => ({
                 match: [{ host: [service.hostname] }],
-                handle: [
-                  {
-                    handler: "reverse_proxy",
-                    upstreams: [{ dial: service.host + ":" + service.port }],
-                  },
-                ],
+                handle: serviceHandlers(service),
               })),
           },
         },
@@ -300,6 +319,10 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       services: clone(target),
       changes: changes(published, target),
       config: config(target),
+      runtime_config: config(published),
+      runtime_read_at: now(),
+      config_redacted_fields: [],
+      runtime_config_redacted_fields: [],
       hash: hash(target),
       runtime_hash: hash(published),
       expected_hash: hash(published),
@@ -392,7 +415,15 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       authenticated = false;
       return { status: 204 };
     }
-    if(method==="GET" && path==="/configuration/export")return ok({format:"caddy-web-admin",version:2,settings:clone(portableSettings),services:draft.map(({name,domain_id,hostname,scheme,host,port,enabled,notes})=>({name,domain_id,hostname,scheme,host,port,enabled,notes}))});
+    if(method==='POST'&&path==='/services/check'){
+      if(input.revision!==revision)return fail(409,'conflict','草稿已变化，请读取最新草稿后重新检查');
+      const candidate=input.service as Service;
+      if(!candidate?.name||!candidate.host||!candidate.hostname)return fail(422,'validation','请填写完整的服务信息');
+      try{parseConfiguration(JSON.stringify({format:'caddy-web-admin',version:2,settings:portableSettings,services:[portableService(candidate)]}));}catch{return fail(422,'validation','高级配置格式无效');}
+      if(['h2c','grpcs'].includes(candidate.scheme)&&candidate.advanced?.compression&&candidate.advanced.compression!=='off')return fail(422,'validation','gRPC 不使用 HTTP 响应压缩');
+      return ok({revision,service:clone(candidate),effective:clone(candidate.advanced??{}),config:config([{...candidate,enabled:true}]),simulated:true});
+    }
+    if(method==="GET" && path==="/configuration/export")return ok({format:"caddy-web-admin",version:2,settings:clone(portableSettings),services:draft.map(portableService)});
     if(method==="POST" && ["/configuration/preview","/configuration/import"].includes(path)){
       try {
         const value=parseConfiguration(JSON.stringify(input.configuration));

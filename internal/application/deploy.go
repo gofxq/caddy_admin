@@ -117,6 +117,8 @@ func (service *Service) Preview(ctx context.Context, rollback string) (domain.Pr
 		}
 		preview.Hash = domain.Fingerprint(preview.Config)
 	}
+	preview.RuntimeConfig = append(json.RawMessage(nil), runtime...)
+	preview.RuntimeReadAt = time.Now().UTC()
 	preview.RuntimeHash = domain.Fingerprint(runtime)
 	preview.Drift = preview.RuntimeHash != preview.ExpectedHash
 	return preview, nil

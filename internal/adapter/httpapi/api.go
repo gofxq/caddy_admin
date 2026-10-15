@@ -98,6 +98,7 @@ func (api *API) Handler() http.Handler {
 	management.GET("/services", api.services)
 	management.GET("/services/:id", api.serviceDetail)
 	management.POST("/services/:id/check-upstream", api.checkUpstream)
+	management.POST("/services/check", api.checkService)
 	management.POST("/services", api.saveService)
 	management.PUT("/services/:id", api.saveService)
 	management.DELETE("/services/:id", api.saveService)
