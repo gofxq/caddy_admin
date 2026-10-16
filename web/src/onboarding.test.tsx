@@ -21,7 +21,7 @@ function renderPage(path:string,component:()=>React.JSX.Element){
 }
 
 const overview={reachable:true,drift:false,runtime_hash:'same',expected_hash:'same',version:0,enabled:0,draft_revision:0,unpublished:false,message:'运行配置与已发布版本一致',recent:[],checked_at:'2026-09-24T00:00:00Z'}
-const settings={config:{origin:location.origin,domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'},external_caddy:false}
+const settings={config:{origin:location.origin,domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',dns_provider:'cloudflare',dns_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'},external_caddy:false}
 
 it('guides a new administrator from creating a service to the first publication',async()=>{
  vi.mocked(api).mockImplementation(async path=>path==='/settings'?settings:path==='/services'?{revision:0,services:[],published:[]}:overview)

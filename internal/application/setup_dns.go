@@ -9,17 +9,18 @@ import (
 )
 
 type SetupDNSPlan struct {
-	ContextFingerprint string `json:"context_fingerprint"`
-	ZoneID             string `json:"zone_id"`
-	Name               string `json:"name"`
-	Type               string `json:"type"`
-	Address            string `json:"address"`
-	Action             string `json:"action"`
-	RecordID           string `json:"record_id,omitempty"`
-	OldAddress         string `json:"old_address,omitempty"`
-	OldProxied         bool   `json:"old_proxied,omitempty"`
-	Warning            string `json:"warning,omitempty"`
-	Fingerprint        string `json:"fingerprint"`
+	Provider           domain.DNSProvider `json:"provider"`
+	ContextFingerprint string             `json:"context_fingerprint"`
+	ZoneID             string             `json:"zone_id"`
+	Name               string             `json:"name"`
+	Type               string             `json:"type"`
+	Address            string             `json:"address"`
+	Action             string             `json:"action"`
+	RecordID           string             `json:"record_id,omitempty"`
+	OldAddress         string             `json:"old_address,omitempty"`
+	OldProxied         bool               `json:"old_proxied,omitempty"`
+	Warning            string             `json:"warning,omitempty"`
+	Fingerprint        string             `json:"fingerprint"`
 }
 
 type SetupDNS interface {
@@ -28,15 +29,17 @@ type SetupDNS interface {
 }
 
 type SetupCloudflare struct {
-	UseConfiguredToken bool   `json:"use_configured_token,omitempty"`
-	SetupID            string `json:"setup_id,omitempty"`
-	Token              string `json:"token"`
-	Address            string `json:"address"`
-	Fingerprint        string `json:"fingerprint"`
-	Confirmed          bool   `json:"confirmed"`
+	Provider           domain.DNSProvider `json:"provider"`
+	UseConfiguredToken bool               `json:"use_configured_token,omitempty"`
+	SetupID            string             `json:"setup_id,omitempty"`
+	Token              string             `json:"token"`
+	Address            string             `json:"address"`
+	Fingerprint        string             `json:"fingerprint"`
+	Confirmed          bool               `json:"confirmed"`
 }
 
 type SetupIntent struct {
+	DispatchedAt      string       `json:"dispatched_at,omitempty"`
 	Plan              SetupDNSPlan `json:"plan"`
 	ConfigurationHash string       `json:"configuration_hash"`
 	SnapshotHash      string       `json:"snapshot_hash"`
@@ -48,6 +51,13 @@ type SetupIntentStore interface {
 }
 
 func (service *Service) PreviewSetupDNS(ctx context.Context, token, hostname, address string) (SetupDNSPlan, error) {
+	return service.PreviewSetupDNSProvider(ctx, service.dnsProvider(), token, hostname, address)
+}
+func (service *Service) PreviewSetupDNSProvider(ctx context.Context, provider domain.DNSProvider, token, hostname, address string) (SetupDNSPlan, error) {
+	provider, err := domain.NormalizeDNSProvider(provider)
+	if err != nil {
+		return SetupDNSPlan{}, err
+	}
 	initialized, err := service.repository.IsInitialized(ctx)
 	if err != nil {
 		return SetupDNSPlan{}, err
@@ -55,10 +65,12 @@ func (service *Service) PreviewSetupDNS(ctx context.Context, token, hostname, ad
 	if initialized {
 		return SetupDNSPlan{}, domain.Conflict("系统已经初始化")
 	}
-	if service.externalCaddy() || service.options.TestTLS || service.setupDNS == nil {
+	if service.externalCaddy() || service.options.TestTLS || service.dnsAdapter(provider) == nil {
 		return SetupDNSPlan{}, domain.Invalid("当前模式不支持本机自动配置 Cloudflare DNS")
 	}
-	return service.setupDNS.Preview(ctx, token, hostname, address)
+	plan, err := service.dnsAdapter(provider).Preview(ctx, token, hostname, address)
+	plan.Provider = provider
+	return plan, err
 }
 
 func setupDNSLocalFailure() error {
@@ -83,11 +95,15 @@ func (service *Service) ConfirmSetupDNS(ctx context.Context, settings SetupSetti
 	if !cf.Confirmed || cf.Fingerprint == "" {
 		return SetupDNSPlan{}, domain.Invalid("请明确确认 DNS 变更")
 	}
-	cf.Token, err = service.configuredToken(cf.Token, cf.UseConfiguredToken, cf.SetupID)
+	cf.Provider, err = domain.NormalizeDNSProvider(cf.Provider)
 	if err != nil {
 		return SetupDNSPlan{}, err
 	}
-	plan, err := service.PreviewSetupDNS(ctx, cf.Token, strings.TrimPrefix(managed.AdminDomain, "caddyadmin."), cf.Address)
+	cf.Token, err = service.configuredProviderToken(cf.Provider, cf.Token, cf.UseConfiguredToken, cf.SetupID)
+	if err != nil {
+		return SetupDNSPlan{}, err
+	}
+	plan, err := service.PreviewSetupDNSProvider(ctx, cf.Provider, cf.Token, strings.TrimPrefix(managed.AdminDomain, "caddyadmin."), cf.Address)
 	if err != nil {
 		return plan, err
 	}
@@ -101,7 +117,10 @@ func (service *Service) ConfirmSetupDNS(ctx context.Context, settings SetupSetti
 	if plan.Fingerprint != cf.Fingerprint && !setupDNSRecovered(intent, plan, cf.Fingerprint) {
 		return plan, domain.Conflict("DNS 记录已变化，请重新预览并确认")
 	}
-	if err = service.secrets.WriteCloudflareToken(cf.Token); err != nil {
+	if err = checkDNSWriteCooldown(intent, plan); err != nil {
+		return plan, err
+	}
+	if err = service.writeDNSToken(cf.Provider, cf.Token); err != nil {
 		return plan, err
 	}
 	// Keep snapshot ownership when retrying an interrupted local completion.
@@ -112,13 +131,22 @@ func (service *Service) ConfirmSetupDNS(ctx context.Context, settings SetupSetti
 			intent = SetupIntent{Plan: plan}
 		}
 	}
+	if plan.Provider == domain.DNSProviderDNSPod && plan.Action != "reuse" {
+		intent.DispatchedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	if err = service.setupIntent.Write(intent); err != nil {
 		return plan, err
 	}
 	dnsContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err = service.setupDNS.Apply(dnsContext, cf.Token, plan); err != nil {
-		return plan, err
+	if err = service.dnsAdapter(cf.Provider).Apply(dnsContext, cf.Token, plan); err != nil {
+		return plan, service.dnsApplyError(plan, err)
+	}
+	if plan.Provider == domain.DNSProviderDNSPod && intent.DispatchedAt != "" {
+		intent.DispatchedAt = ""
+		if err = service.setupIntent.Write(intent); err != nil {
+			return plan, err
+		}
 	}
 	return plan, nil
 }
@@ -128,7 +156,7 @@ func setupDNSRecovered(intent SetupIntent, plan SetupDNSPlan, fingerprint string
 }
 
 func setupDNSIntentMatches(intent SetupIntent, plan SetupDNSPlan) bool {
-	return intent.Plan.Name == plan.Name && intent.Plan.Type == plan.Type && intent.Plan.Address == plan.Address && intent.Plan.ZoneID == plan.ZoneID && intent.Plan.ContextFingerprint == plan.ContextFingerprint && plan.Action == "reuse"
+	return intent.Plan.Provider == plan.Provider && intent.Plan.Name == plan.Name && intent.Plan.Type == plan.Type && intent.Plan.Address == plan.Address && intent.Plan.ZoneID == plan.ZoneID && intent.Plan.ContextFingerprint == plan.ContextFingerprint && plan.Action == "reuse"
 }
 
 // SetupDNSReport contains all checks, including unsuccessful DNS responses.

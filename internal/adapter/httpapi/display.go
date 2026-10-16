@@ -42,7 +42,7 @@ func configForDisplay(raw json.RawMessage) (json.RawMessage, []string, error) {
 					opaque = true
 				}
 			}
-			if strings.HasSuffix(path, "/provider") && node["name"] != "cloudflare" {
+			if strings.HasSuffix(path, "/provider") && node["name"] != "cloudflare" && node["name"] != "dnspod" {
 				opaque = true
 			}
 			for key, child := range node {

@@ -56,6 +56,8 @@ def setup(container,values,services=None):
     address=docker('inspect','-f','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',container).stdout.strip()
     https_origin='https://'+address+(':8082' if values.get('CADDY_ADMIN_URL') else '')
     origin=https_origin if values.get('CADDY_ADMIN_URL') else 'http://'+address
+    # docker run returns before Manager finishes certificate generation/listening.
+    eventually(lambda:curl('--noproxy','*','-sk','--connect-timeout','1','--max-time','2','-o','/dev/null','-w','%{http_code}',https_origin+'/api/v1/setup/status',check=False).stdout=='200')
     if not values.get('CADDY_ADMIN_URL'):
         redirect=curl('--noproxy','*','-s','--connect-timeout','2','--max-time','8','-D','-', '-o','/dev/null','http://'+address+'/')
         assert '307' in redirect.stdout and 'Location: /setup' in redirect.stdout,'HTTP forced HTTPS before initialization'
@@ -92,7 +94,7 @@ def setup(container,values,services=None):
     assert setup_status.get('setup_id'),'Setup session identifier missing'
     assert password not in status_payload,'Setup status leaked password'
     if values.get('CLOUDFLARE_API_TOKEN'):
-        assert setup_status['cloudflare_token_status']=='ready','configured test token was not available'
+        assert setup_status['dns_token_status']=='ready','configured test token was not available'
         assert values['CLOUDFLARE_API_TOKEN'] not in status_payload,'Setup status leaked token'
     hostname='caddyadmin.home.example.test'
     body={'username':'admin','password':password,

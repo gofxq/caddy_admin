@@ -21,7 +21,7 @@ func (service *Service) publicCertificateReady(ctx context.Context) bool {
 		return true
 	}
 	status, err := service.repository.CertificateStatus(ctx)
-	if err != nil || status.Mode != domain.CertificateModeCloudflare || status.ActivationStatus != "success" || service.options.TestTLS {
+	if err != nil || !domain.IsPublicCertificateMode(status.Mode) || status.ActivationStatus != "success" || service.options.TestTLS {
 		return false
 	}
 	if !service.runtimeMatchesSnapshot(ctx) || service.certificates == nil {

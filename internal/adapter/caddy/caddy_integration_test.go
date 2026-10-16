@@ -421,3 +421,35 @@ func TestCaddyIntegrationObservationMetricsLogsUnknownHostsAndReload(t *testing.
 		t.Fatal("reload did not reset epoch", err)
 	}
 }
+
+func TestDNSPodValidationReadsRestrictedSecretFile(t *testing.T) {
+	binary := os.Getenv("CADDY_INTEGRATION_BINARY")
+	if binary == "" {
+		t.Skip("set CADDY_INTEGRATION_BINARY to validate the DNSPod module")
+	}
+	dir := t.TempDir()
+	secretPath := filepath.Join(dir, "secrets", "dnspod_token")
+	secret := &SecretFile{DNSPodPath: secretPath}
+	if err := secret.WriteDNSToken(domain.DNSProviderDNSPod, "12345,"+strings.Repeat("x", 32)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DNSPOD_TOKEN", "")
+	t.Setenv("DNSPOD_TOKEN_FILE", secretPath)
+	config := integrationConfig(t, dir)
+	config.TestTLS = false
+	config.CertificateMode = domain.CertificateModeDNSPod
+	config.TemporaryAdminCertificate = true
+	config.TemporaryAdminCertPath = filepath.Join(dir, "secrets", "admin.crt")
+	config.TemporaryAdminKeyPath = filepath.Join(dir, "secrets", "admin.key")
+	if err := EnsureBootstrapCertificate(config.TemporaryAdminCertPath, config.TemporaryAdminKeyPath, "https://"+config.AdminDomain); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := domain.Generate(config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(Options{Socket: config.Socket, CaddyBinary: binary, DataDir: dir})
+	if err = client.Validate(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+}

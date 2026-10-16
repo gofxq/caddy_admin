@@ -199,16 +199,34 @@ func (api *setupAPI) dnsPreview(c *gin.Context) {
 		return
 	}
 	request, ok := bindJSON[struct {
-		Token              string `json:"token"`
-		Domain             string `json:"domain"`
-		UseConfiguredToken bool   `json:"use_configured_token,omitempty"`
-		SetupID            string `json:"setup_id,omitempty"`
-		Address            string `json:"address"`
+		Provider           domain.DNSProvider `json:"provider"`
+		Token              string             `json:"token"`
+		Domain             string             `json:"domain"`
+		UseConfiguredToken bool               `json:"use_configured_token,omitempty"`
+		SetupID            string             `json:"setup_id,omitempty"`
+		Address            string             `json:"address"`
 	}](c)
 	if !ok {
 		return
 	}
 	token := request.Token
+	if provider, ok := api.application.(interface {
+		ResolveSetupProviderToken(domain.DNSProvider, string, bool, string) (string, error)
+		PreviewSetupDNSProvider(context.Context, domain.DNSProvider, string, string, string) (application.SetupDNSPlan, error)
+	}); ok {
+		token, err := provider.ResolveSetupProviderToken(request.Provider, request.Token, request.UseConfiguredToken, request.SetupID)
+		if err != nil {
+			abortError(c, err)
+			return
+		}
+		plan, err := provider.PreviewSetupDNSProvider(c.Request.Context(), request.Provider, token, request.Domain, request.Address)
+		if err != nil {
+			abortError(c, err)
+			return
+		}
+		respondJSON(c, http.StatusOK, plan)
+		return
+	}
 	if resolver, ok := api.application.(interface {
 		ResolveSetupToken(string, bool, string) (string, error)
 	}); ok {
@@ -246,7 +264,7 @@ func (api *setupAPI) dnsConfirm(c *gin.Context) {
 	}
 	request, ok := bindJSON[struct {
 		Settings           application.SetupSettings   `json:"settings"`
-		Cloudflare         application.SetupCloudflare `json:"cloudflare"`
+		Cloudflare         application.SetupCloudflare `json:"dns"`
 		ImportSettings     *domain.ManagedSettings     `json:"import_settings,omitempty"`
 		UseConfiguredToken bool                        `json:"use_configured_token,omitempty"`
 		SetupID            string                      `json:"setup_id,omitempty"`

@@ -15,6 +15,7 @@ import (
 const Version = "0.1.0"
 
 type Config struct {
+	DNSProvider               domain.DNSProvider     `json:"-"`
 	SetupDomain               string                 `json:"-"`
 	SetupUsername             string                 `json:"-"`
 	SetupAddress              string                 `json:"-"`
@@ -53,7 +54,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{DataDir: "/var/lib/manager", SnapshotDir: "/srv/snapshots", Socket: "/run/caddy/admin.sock", Listen: "127.0.0.1:8080", AllowedNames: []string{}, DeniedIPs: []string{}, Resolvers: []string{}, ManagerDial: "127.0.0.1:8080", StaticRoot: "/srv/web", CaddyStorage: "/data/caddy", CaddyBinary: "/usr/bin/caddy", ProbeAddress: "127.0.0.1:443", CertificateMode: domain.CertificateModeCloudflare, HTTPPort: "80", HTTPSPort: "443"}
+	return Config{DNSProvider: domain.DNSProviderCloudflare, DataDir: "/var/lib/manager", SnapshotDir: "/srv/snapshots", Socket: "/run/caddy/admin.sock", Listen: "127.0.0.1:8080", AllowedNames: []string{}, DeniedIPs: []string{}, Resolvers: []string{}, ManagerDial: "127.0.0.1:8080", StaticRoot: "/srv/web", CaddyStorage: "/data/caddy", CaddyBinary: "/usr/bin/caddy", ProbeAddress: "127.0.0.1:443", CertificateMode: domain.CertificateModeCloudflare, HTTPPort: "80", HTTPSPort: "443"}
 }
 
 func CloudflareTokenPath(dataDir string) string {
@@ -64,6 +65,26 @@ func CloudflareTokenPath(dataDir string) string {
 		dataDir = Default().DataDir
 	}
 	return filepath.Join(dataDir, "secrets", "cloudflare_token")
+}
+
+func DNSTokenEnvironment(provider domain.DNSProvider) string {
+	if provider == domain.DNSProviderDNSPod {
+		return "DNSPOD_TOKEN"
+	}
+	return "CLOUDFLARE_API_TOKEN"
+}
+
+func DNSTokenPath(dataDir string, provider domain.DNSProvider) string {
+	if provider != domain.DNSProviderDNSPod {
+		return CloudflareTokenPath(dataDir)
+	}
+	if path := os.Getenv("DNSPOD_TOKEN_FILE"); path != "" {
+		return path
+	}
+	if dataDir == "" {
+		dataDir = Default().DataDir
+	}
+	return filepath.Join(dataDir, "secrets", "dnspod_token")
 }
 
 func (config Config) ManagedSettings() domain.ManagedSettings {
@@ -80,6 +101,9 @@ func ApplyManagedSettings(config *Config, settings domain.ManagedSettings) error
 
 func Load() (Config, error) {
 	config := Default()
+	if value := strings.TrimSpace(os.Getenv("DNS_PROVIDER")); value != "" {
+		config.DNSProvider = domain.DNSProvider(value)
+	}
 	// First-use values are validated only after the database confirms a new
 	// instance. Invalid or changed setup values must never prevent normal startup.
 	config.SetupDomain = strings.TrimSpace(os.Getenv("SETUP_DOMAIN"))

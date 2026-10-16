@@ -89,7 +89,7 @@ func (d *DNS) records(ctx context.Context, token, zone, name string) ([]record, 
 func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (application.SetupDNSPlan, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	p := application.SetupDNSPlan{}
+	p := application.SetupDNSPlan{Provider: domain.DNSProviderCloudflare}
 	if err := domain.ValidateCloudflareToken(token); err != nil {
 		return p, err
 	}
@@ -174,9 +174,10 @@ func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (app
 		return p, domain.Invalid("通配符存在多条同类型记录；请先处理重复记录")
 	}
 	raw, _ := json.Marshal(struct {
-		Zone, Name, Type, Address string
-		Records, Admin            []record
-	}{p.ZoneID, p.Name, p.Type, p.Address, records, admin})
+		Provider                              domain.DNSProvider
+		Credential, Zone, Name, Type, Address string
+		Records, Admin                        []record
+	}{p.Provider, credentialFingerprint(token), p.ZoneID, p.Name, p.Type, p.Address, records, admin})
 	sum := sha256.Sum256(raw)
 	p.Fingerprint = hex.EncodeToString(sum[:])
 	unaffected := []record{}
@@ -186,14 +187,18 @@ func (d *DNS) Preview(ctx context.Context, token, hostname, address string) (app
 		}
 	}
 	raw, _ = json.Marshal(struct {
-		Zone, Name, Type, Address string
-		Records, Admin            []record
-	}{p.ZoneID, p.Name, p.Type, p.Address, unaffected, admin})
+		Provider                              domain.DNSProvider
+		Credential, Zone, Name, Type, Address string
+		Records, Admin                        []record
+	}{p.Provider, credentialFingerprint(token), p.ZoneID, p.Name, p.Type, p.Address, unaffected, admin})
 	sum = sha256.Sum256(raw)
 	p.ContextFingerprint = hex.EncodeToString(sum[:])
 	return p, nil
 }
 func (d *DNS) Apply(ctx context.Context, token string, p application.SetupDNSPlan) error {
+	if p.Provider != domain.DNSProviderCloudflare {
+		return domain.Conflict("DNS 服务商已变化，请重新预览并确认")
+	}
 	current, err := d.Preview(ctx, token, strings.TrimPrefix(p.Name, "*."), p.Address)
 	if err != nil {
 		return err
@@ -229,4 +234,9 @@ func (d *DNS) Apply(ctx context.Context, token string, p application.SetupDNSPla
 		return readErr
 	}
 	return &domain.AppError{Status: 503, Code: "cloudflare_dns_uncertain", Message: "DNS 写入结果待核对；保留初始化信息后重试，将先读取实际记录"}
+}
+
+func credentialFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

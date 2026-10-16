@@ -24,7 +24,7 @@ docker compose up -d
 
 或者从这里复制 [compose.yaml](compose.yaml)。
 
-打开 `http://服务器IP/setup`，按向导创建管理员、填写 Cloudflare Token 并确认 DNS 变更，自动配置通配符解析与申请证书。HTTP 会明文传输手动填写的密码与 Token，建议从 HTTPS 打开；完成后切换 HTTPS，签发期间可能出现临时证书提示。数据默认保存在 `.run/`，可在 Compose 的 `volumes` 中[自定义数据目录](docs/operations.md#持久化)。
+打开 `http://服务器IP/setup`，按向导创建管理员、选择 DNS 提供商（默认 Cloudflare，可选 DNSPod）并填写 Token 并确认 DNS 变更，自动配置通配符解析与申请证书。HTTP 会明文传输手动填写的密码与 Token，建议从 HTTPS 打开；完成后切换 HTTPS，签发期间可能出现临时证书提示。数据默认保存在 `.run/`，可在 Compose 的 `volumes` 中[自定义数据目录](docs/operations.md#持久化)。
 
 默认使用 `ghcr.io/gofxq/caddy-admin:latest`，无需 clone 源码或本地构建。
 
@@ -35,7 +35,7 @@ docker compose up -d
 
 保存草稿不会影响线上，确认发布后才生效。新建服务支持 HTTP/HTTPS、gRPC、gzip/zstd、头部与超时快捷配置，以及可检查的[服务级配置片段](docs/usage.md#服务高级配置)。
 
-可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；普通 Setup 只确认使用，不回显；内置正式模式额外提供 `SETUP_DOMAIN` 和 `SETUP_CADDY_IP` 时，启动后先通过服务端 DoH 检查解析，再只读核对 Cloudflare 记录；预检无阻断或需确认的警告且无需 DNS 变更则自动初始化；服务器未解析到控制台地址仅作提示，不暂停自动流程。需要变更或确认警告时接回三步向导。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
+可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；普通 Setup 只确认使用，不回显；内置正式模式额外提供 `SETUP_DOMAIN` 和 `SETUP_CADDY_IP` 时，启动后先通过服务端 DoH 检查解析，再只读核对所选提供商的记录；预检无阻断或需确认的警告且无需 DNS 变更则自动初始化；服务器未解析到控制台地址仅作提示，不暂停自动流程。需要变更或确认警告时接回三步向导。DNSPod 使用 `DNS_PROVIDER=dnspod` 和 `DNSPOD_TOKEN=ID,Token`；不指定提供商时默认 Cloudflare，也可在向导中选择。初始化后环境密码不重置账号，保存的提供商与持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
 
 首次登录后可直接添加服务草稿，再统一预览、校验与确认发布。新实例首个域名和新增域名默认允许互联网访问，控制台来源限制关闭；可信与上游网段默认覆盖全部 IPv4/IPv6，合法上游服务名默认全部许可，受保护目标仍拒绝。需要 LAN/VPN 限制时，在设置中将全网段替换为实际可信网段，再明确发布。已有实例及显式导入保持原策略，详见[域名与访问策略](docs/domain-access-policy.md)。
 
@@ -51,7 +51,7 @@ docker compose up -d
 
 - 后端：Go、Gin、GORM、SQLite。
 - 前端：React、TypeScript、Vite、Tailwind CSS。
-- 代理与证书：Caddy、Cloudflare DNS 模块。
+- 代理与证书：Caddy、Cloudflare 与 DNSPod DNS 模块。
 - 构建与部署：Docker Compose、GitHub Actions、GHCR。
 
 ## 文档

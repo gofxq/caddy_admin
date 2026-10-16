@@ -25,7 +25,7 @@ function FirstRunTasks({overview,settings,hasService}:{overview:OverviewData;set
   {done:overview.version>0&&overview.enabled>0,title:'完成首个服务上线',detail:isStaticDemo?'发布前仍需预览、模拟校验和明确确认':'发布前仍需预览、真实校验和明确确认',to:'/deployments'},
  ]:[
   {done:formal,title:'使用正式控制台入口',detail:formal?'当前已从正式入口访问':'当前仍是临时入口',to:settings?.config?.origin||'/settings',external:true},
-  {done:tokenReady&&certificateReady,title:'启用可信证书',detail:certificateReady?(isStaticDemo?'Cloudflare Token 与 TLS 已模拟就绪':'Cloudflare Token 与真实 TLS 均已就绪'):tokenReady?'Token 已配置，等待证书激活与 TLS 探测':'配置 Cloudflare Token；等待期间可先创建草稿',to:tokenReady?'/certificates':'/settings'},
+  {done:tokenReady&&certificateReady,title:'启用可信证书',detail:certificateReady?(isStaticDemo?'DNS Token 与 TLS 已模拟就绪':'DNS Token 与真实 TLS 均已就绪'):tokenReady?'Token 已配置，等待证书激活与 TLS 探测':'配置 DNS Token；等待期间可先创建草稿',to:tokenReady?'/certificates':'/settings'},
   ...policyTasks,
   {done:hasService,title:'创建服务草稿',detail:hasService?'已有服务配置':'保存草稿不会立即影响线上',to:'/services'},
   {done:overview.version>0&&overview.enabled>0,title:'完成首个服务上线',detail:'发布继续受证书、校验有效期和漂移确认门禁保护',to:'/deployments'},

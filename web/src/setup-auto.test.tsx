@@ -20,7 +20,7 @@ it('observes background progress without posts or browser DNS queries',async()=>
  expect(fetch.mock.calls.every(([,options])=>!options?.method || options.method==='GET')).toBe(true)
 })
 it('prefills valid partial values without confirming credentials or transmitting them',async()=>{
- const fetch=vi.fn().mockResolvedValue(response({initialized:false,automatic:{status:'manual',stage:'configuration'},defaults:{username:'operator',domain:'home.example.com',address:'fd00::6',resolvers:['9.9.9.9']},admin_password_status:'ready',cloudflare_token_status:'ready',setup_id:'id'}));vi.stubGlobal('fetch',fetch)
+ const fetch=vi.fn().mockResolvedValue(response({initialized:false,automatic:{status:'manual',stage:'configuration'},defaults:{username:'operator',domain:'home.example.com',address:'fd00::6',resolvers:['9.9.9.9']},admin_password_status:'ready',dns_token_status:'ready',setup_id:'id'}));vi.stubGlobal('fetch',fetch)
  render(<Setup pollLogin={false}/>);expect(await screen.findByLabelText('管理员用户名')).toHaveValue('operator')
  expect(screen.getByLabelText('我确认使用已配置的管理员密码')).not.toBeChecked()
  fireEvent.click(screen.getByLabelText('我确认使用已配置的管理员密码'));fireEvent.click(screen.getByRole('button',{name:'下一步'}))

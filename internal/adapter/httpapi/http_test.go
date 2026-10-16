@@ -387,7 +387,7 @@ func TestSetupDNSConfirmationRequiresExactOriginAndReturnsPlan(t *testing.T) {
 	for _, origin := range []string{"", "https://evil.example", "http://127.0.0.1:8080"} {
 		fake := &setupApplication{}
 		handler := NewSetup(fake, SetupOptions{}, nil)
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/confirm", strings.NewReader(`{"settings":{"domain":"home.example.test"},"cloudflare":{"token":"test-token","address":"10.0.0.6","fingerprint":"preview","confirmed":true}}`))
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/dns/confirm", strings.NewReader(`{"settings":{"domain":"home.example.test"},"dns":{"token":"test-token","address":"10.0.0.6","fingerprint":"preview","confirmed":true}}`))
 		request.Host = "127.0.0.1:8080"
 		request.Header.Set("Origin", origin)
 		request.Header.Set("Content-Type", "application/json")

@@ -52,7 +52,12 @@ func (api *API) settings(c *gin.Context) {
 		}
 		return out
 	}
-	respondJSON(c, http.StatusOK, gin.H{"config": withTLS(config), "active_config": withTLS(activeConfig), "revision": revision, "manager_version": api.options.ManagerVersion, "caddy_version": version, "cloudflare_module": module, "token_configured": api.application.TokenConfigured(), "certificate_status": status, "external_caddy": api.options.ExternalCaddy})
+	respondJSON(c, http.StatusOK, gin.H{"config": withTLS(config), "active_config": withTLS(activeConfig), "revision": revision, "manager_version": api.options.ManagerVersion, "caddy_version": version, "dns_provider": func() domain.DNSProvider {
+		if domain.IsPublicCertificateMode(status.Mode) {
+			return domain.DNSProvider(status.Mode)
+		}
+		return domain.DNSProviderCloudflare
+	}(), "dns_module": module, "token_configured": api.application.TokenConfigured(), "certificate_status": status, "external_caddy": api.options.ExternalCaddy})
 }
 
 func (api *API) saveSettings(c *gin.Context) {

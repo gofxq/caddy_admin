@@ -132,17 +132,20 @@ func (client *Client) Validate(ctx context.Context, raw []byte) error {
 	command.Stdin = bytes.NewReader(isolated)
 	command.Env = append(os.Environ(), "XDG_DATA_HOME="+dir, "XDG_CONFIG_HOME="+dir)
 	if client.options.AdminURL == "" {
-		path := config.CloudflareTokenPath(client.options.DataDir)
-		tokenBytes, readErr := os.ReadFile(path)
-		token := ""
-		if readErr == nil {
-			token = strings.TrimSpace(string(tokenBytes))
-		}
-		if token == "" {
-			token = os.Getenv("CLOUDFLARE_API_TOKEN")
-		}
-		if token != "" {
-			command.Env = setEnvironment(command.Env, "CLOUDFLARE_API_TOKEN", token)
+		for _, provider := range []domain.DNSProvider{domain.DNSProviderCloudflare, domain.DNSProviderDNSPod} {
+			path := config.DNSTokenPath(client.options.DataDir, provider)
+			key := config.DNSTokenEnvironment(provider)
+			tokenBytes, readErr := os.ReadFile(path)
+			token := ""
+			if readErr == nil {
+				token = strings.TrimSpace(string(tokenBytes))
+			}
+			if token == "" {
+				token = os.Getenv(key)
+			}
+			if token != "" {
+				command.Env = setEnvironment(command.Env, key, token)
+			}
 		}
 	}
 	if output, runErr := command.CombinedOutput(); runErr != nil {
@@ -167,6 +170,10 @@ func setEnvironment(environment []string, key, value string) []string {
 }
 
 func (client *Client) BuildInfo(ctx context.Context) (string, bool) {
+	return client.DNSBuildInfo(ctx, domain.DNSProviderCloudflare)
+}
+
+func (client *Client) DNSBuildInfo(ctx context.Context, provider domain.DNSProvider) (string, bool) {
 	if client.options.AdminURL != "" {
 		return "unknown (external)", false
 	}
@@ -177,5 +184,12 @@ func (client *Client) BuildInfo(ctx context.Context) (string, bool) {
 		return "unknown", false
 	}
 	modules, err := exec.CommandContext(ctx, client.options.CaddyBinary, "list-modules").Output()
-	return strings.TrimSpace(string(version)), err == nil && strings.Contains(string(modules), "dns.providers.cloudflare")
+	normalized, providerErr := domain.NormalizeDNSProvider(provider)
+	found := false
+	for _, module := range strings.Fields(string(modules)) {
+		if module == "dns.providers."+string(normalized) {
+			found = true
+		}
+	}
+	return strings.TrimSpace(string(version)), err == nil && providerErr == nil && found
 }

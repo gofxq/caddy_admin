@@ -43,13 +43,13 @@
 | 方法 | 路径 | 认证 / 行为 |
 | --- | --- | --- |
 | GET | `/setup/progress` | 无认证、只读、no-store；返回脱敏 `status`、`stage`、`message`、可选 `can_recheck` 及 `checks`（检查 id、pass/info/warning/block 状态、固定脱敏原因 message、处理建议 next_step），不包含重试或写入操作；轮询不消耗 Setup 写入限速配额 |
-| GET | `/setup/status` | 无认证；返回 `automatic` 进度，未初始化且 GET 携带精确同源 Origin 或 Referer 时另返回有效非敏感 `defaults`（domain、username、address、resolvers）及 `configuration_error`；无同源头的公开读取不返回 defaults 或 Resolver 建议；后台运行时只返回进度和空默认字段。返回初始化状态、外部 Caddy 模式、`test_tls`、最多三个非敏感 Resolver 建议、`setup_id`，以及 `admin_password_status` / `cloudflare_token_status`（missing、ready、invalid）；只返回非敏感原因，不回显凭据 |
-| POST | `/setup/recheck` | 精确 Origin、Setup 限速与当前 `setup_id`；请求仅 `{ "setup_id": "…" }`，只使用服务器预配置重查 DoH → Cloudflare 记录 → 服务器预检，返回脱敏进度与 `can_recheck`；不接收凭据、环境覆盖或确认标记，不写 DNS/secret/快照/数据库，也不自动保存初始化；并发、已初始化、结果待核对或已有意图/快照返回冲突 |
+| GET | `/setup/status` | 无认证；返回 `automatic` 进度，未初始化且 GET 携带精确同源 Origin 或 Referer 时另返回有效非敏感 `defaults`（domain、username、address、resolvers）及 `configuration_error`；无同源头的公开读取不返回 defaults 或 Resolver 建议；后台运行时只返回进度和空默认字段。返回初始化状态、外部 Caddy 模式、`test_tls`、最多三个非敏感 Resolver 建议、`setup_id`，以及 `admin_password_status` / `dns_token_status`（missing、ready、invalid）；只返回非敏感原因，不回显凭据 |
+| POST | `/setup/recheck` | 精确 Origin、Setup 限速与当前 `setup_id`；请求仅 `{ "setup_id": "…" }`，只使用服务器预配置重查 DoH → 所选提供商记录 → 服务器预检，返回脱敏进度与 `can_recheck`；不接收凭据、环境覆盖或确认标记，不写 DNS/secret/快照/数据库，也不自动保存初始化；并发、已初始化、结果待核对或已有意图/快照返回冲突 |
 | POST | `/setup/preflight` | 精确同源 `Origin`；返回 `normalized`、固定检查项、`can_complete`、`requires_acknowledgement` 与 `warning_fingerprint` |
 | POST | `/setup/dns/preview` | 精确同源 HTTP/HTTPS Origin；`{token,domain,address}；预配置分支使用 use_configured_token:true 与 setup_id` → 检查 Token 的目标域名访问权限及 DNS 记录，返回变更预览或 reuse，不写入 DNS |
-| POST | `/setup/dns/confirm` | 精确同源 HTTP/HTTPS Origin；`{settings,cloudflare:{token,address,fingerprint,confirmed:true}}` → 保存恢复意图、立即写入并核对 Cloudflare DNS；成功返回 DNS plan，不等待实际解析传播，失败保留输入重试 |
+| POST | `/setup/dns/confirm` | 精确同源 HTTP/HTTPS Origin；`{settings,dns:{provider,token,address,fingerprint,confirmed:true}}` → 保存恢复意图、立即写入并核对所选提供商 DNS；成功返回 DNS plan，不等待实际解析传播，失败保留输入重试 |
 | POST | `/setup/dns/check` | 精确同源 HTTP/HTTPS Origin；`{settings,address}` → 只读查询，返回 `{verified,queries:[{name,resolver,addresses,status,message}]}`；DNS 未生效或查询失败也返回 200 完整结果 |
-| POST | `/setup/complete` | 精确同源 `Origin`；提交管理员账号、设置、`acknowledge_warnings` 和已确认的 `warning_fingerprint`；服务端重新执行相同预检，内置非测试模式另须 `cloudflare` 与检查指纹；需要变更的 DNS 先明确确认并写入，已有记录可直接复用，第一个有效提交返回 `202` 后重启 |
+| POST | `/setup/complete` | 精确同源 `Origin`；提交管理员账号、设置、`acknowledge_warnings` 和已确认的 `warning_fingerprint`；服务端重新执行相同预检，内置非测试模式另须 `dns` 与检查指纹；需要变更的 DNS 先明确确认并写入，已有记录可直接复用，第一个有效提交返回 `202` 后重启 |
 
 有导入服务时预检另含 `imported_services`；`/setup/preflight` 可提交 `{settings,services}`，`/setup/complete` 另提交 `services` 和 `confirm_import:true`。采用 `import_settings` 也必须确认导入，即使服务列表为空。服务重新接受域名、上游和唯一性校验，与管理员及设置事务化保存，仅作为草稿，不自动发布。
 
@@ -67,11 +67,13 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 
 普通完成请求 `settings` 仅包含 `domain` 与可选 `resolvers`（默认 `1.1.1.1`）。服务端规范化基础域名、登记首个 `{id,name,access:"internet"}`，派生 `admin_domain=caddyadmin.<domain>` 及 HTTPS Origin；`console_lan_only:false`，`lan_cidrs` 与 `upstream_cidrs` 均为 `["0.0.0.0/0","::/0"]`，`allowed_names:["*"]`、`denied_ips:[]`。独立 `*` 许可全部合法上游名称，仍检查全部解析 IP 和系统受保护目标。普通请求不接受旧 `homelab_domain` 或网络输入。显式导入通过 `import_settings` 提交完整新格式设置，可提交 `services`；采用 `import_settings` 或非空服务草稿时均须 `confirm_import:true`，空服务列表不免除域名与策略导入确认。导入控制台限制只入草稿，不自动启用。
 
-预配置密码用顶层 `use_configured_password:true,setup_id`；完成请求的预配置 Token 用顶层 `use_configured_token:true,setup_id`；DNS 确认也接受 `cloudflare.use_configured_token:true,cloudflare.setup_id`，替代对应手动值。必须明确使用确认，不能同时提交手动覆盖值；重建后的旧 Setup 标识拒绝。状态缺失时手动输入，非法部署值须修正后重建。外部与测试模式不接受本地 Token。Setup 不按公网/私网来源或私网 IP Host 判断，但精确 Origin、限速与初始化状态检查仍执行。
+DNS 服务商仅支持 `cloudflare`（缺省）和 `dnspod`。`/setup/status` 返回 `dns_provider` 及 `dns_credentials` 映射（各服务商的 `status`、可选 `error`），不含凭据；`dns_token_status` 对应当前默认选择。DNS 预览请求带 `provider`，确认和完成的 `dns` 对象带 `provider`；完成请求还接受顶层 `dns_provider`（外部模式不提交本地 `dns` 凭据）。指纹绑定服务商与凭据，切换后必须重新检查。`GET /settings` 返回已保存的 `dns_provider` 和对应 `dns_module` 检测结果；初始化后 `/settings/dns` 仅接受当前提供商的凭据更新，不允许借此切换提供商。
 
-内置非测试初始化提交 `cloudflare:{token,address,fingerprint,confirmed}`；`fingerprint` 来自只读 DNS 预览。已有记录返回 `action:reuse` 且浏览器解析通过时，向导可直接继续，不调用 DNS 确认接口，完成请求使用 `confirmed:false`（也可省略）。新增或修改记录须先调用 DNS 确认接口并提交 `confirmed:true`。预览返回 `zone_id,name,type,address,action,record_id?,old_address?,old_proxied?,warning?,fingerprint,context_fingerprint`，`action` 为 `create|update|reuse`。调用 `/setup/dns/confirm` 时重新核对记录，立即写入并读取核对结果；已变化返回 409，需重新预览，成功后不会等待传播。独立调用 `/setup/dns/check` 时，服务端直接向每个所选解析器查询控制台域名和随机一层子域的 A 与 AAAA，不使用系统 hosts 或搜索后缀；检查接口为每个名称、解析器返回查询到的 IP 数组、`pass|block` 状态及中文说明；部分失败仍返回全部结果，不输出原始查询错误。`verified` 表示全部查询通过当前检查条件。内置非测试模式必须提供目标 IP，结果必须仅包含目标 IP；外部和 `TEST_TLS=true` 模式可省略 `address`，此时仅检查有解析结果，消息明确说明未核对目标 IP。参数无效返回 422，已初始化返回 409，Origin 不匹配返回 403。向导的「检查 DNS」先通过 `/setup/dns/preview` 只读检查 Token 的目标域名访问权限与记录；已确认写入后的传播重查不重复写入。解析查询由浏览器直接调用固定 Cloudflare/Google JSON DoH，检查控制台和随机子域的 A/AAAA，并核对全部返回地址；不调用 `/setup/dns/check`。该后端接口保留为专家诊断入口，使用服务器解析器，与浏览器 DoH 结果可能不同。浏览器 DoH 选择不写入 `settings.resolvers`，后者仍供 Caddy 和服务器诊断使用。完成接口只接受符合目标要求且与检查或确认指纹一致的 Cloudflare 实际记录；未确认变更的复用请求必须与当前完整指纹一致，不能借用历史写入意图跳过变化核对。接口要求明确有效的入口 IP（不能空值或使用未指定、回环、链路本地或组播地址），并重新校验业务设置、预检警告、真实 Caddy 和快照归属；不再执行普通 DNS 强制传播校验，也不接受或信任浏览器的 `verified` 标记，不会在最终提交时创建或更新 DNS。外部和 `TEST_TLS=true` 模式不接受本机 `cloudflare`。DNS 已成功而本地初始化失败返回 `503 setup_local_persistence`，保留恢复意图，修复后重新预览并提交；不自动撤销外部 DNS。
+预配置密码用顶层 `use_configured_password:true,setup_id`；完成请求的预配置 Token 用顶层 `use_configured_token:true,setup_id`；DNS 确认也接受 `dns.use_configured_token:true,dns.setup_id`，替代对应手动值。必须明确使用确认，不能同时提交手动覆盖值；重建后的旧 Setup 标识拒绝。状态缺失时手动输入，非法部署值须修正后重建。外部与测试模式不接受本地 Token。Setup 不按公网/私网来源或私网 IP Host 判断，但精确 Origin、限速与初始化状态检查仍执行。
 
-之后可在认证接口 `POST /settings/cloudflare` 中按 `{ "token": "…", "enable": true }` 启用 Cloudflare；该接口要求登录会话、精确 Origin 与 CSRF Token。密钥只写入受限 secret 文件，响应、日志和状态接口不回显。外部模式不读取或保存本地 Token。
+内置非测试初始化提交 `dns:{provider,token,address,fingerprint,confirmed}`；`fingerprint` 来自只读 DNS 预览。已有记录返回 `action:reuse` 且浏览器解析通过时，向导可直接继续，不调用 DNS 确认接口，完成请求使用 `confirmed:false`（也可省略）。新增或修改记录须先调用 DNS 确认接口并提交 `confirmed:true`。预览返回 `provider,zone_id,name,type,address,action,record_id?,old_address?,old_proxied?,warning?,fingerprint,context_fingerprint`，`action` 为 `create|update|reuse`。调用 `/setup/dns/confirm` 时重新核对记录，立即写入并读取核对结果；已变化返回 409，需重新预览，成功后不会等待传播。独立调用 `/setup/dns/check` 时，服务端直接向每个所选解析器查询控制台域名和随机一层子域的 A 与 AAAA，不使用系统 hosts 或搜索后缀；检查接口为每个名称、解析器返回查询到的 IP 数组、`pass|block` 状态及中文说明；部分失败仍返回全部结果，不输出原始查询错误。`verified` 表示全部查询通过当前检查条件。内置非测试模式必须提供目标 IP，结果必须仅包含目标 IP；外部和 `TEST_TLS=true` 模式可省略 `address`，此时仅检查有解析结果，消息明确说明未核对目标 IP。参数无效返回 422，已初始化返回 409，Origin 不匹配返回 403。向导的「检查 DNS」先通过 `/setup/dns/preview` 只读检查 Token 的目标域名访问权限与记录；已确认写入后的传播重查不重复写入。解析查询由浏览器直接调用固定 Cloudflare/Google JSON DoH，检查控制台和随机子域的 A/AAAA，并核对全部返回地址；不调用 `/setup/dns/check`。该后端接口保留为专家诊断入口，使用服务器解析器，与浏览器 DoH 结果可能不同。浏览器 DoH 选择不写入 `settings.resolvers`，后者仍供 Caddy 和服务器诊断使用。完成接口只接受符合目标要求且与检查或确认指纹一致的实际 DNS 记录；未确认变更的复用请求必须与当前完整指纹一致，不能借用历史写入意图跳过变化核对。接口要求明确有效的入口 IP（不能空值或使用未指定、回环、链路本地或组播地址），并重新校验业务设置、预检警告、真实 Caddy 和快照归属；不再执行普通 DNS 强制传播校验，也不接受或信任浏览器的 `verified` 标记，不会在最终提交时创建或更新 DNS。外部和 `TEST_TLS=true` 模式不接受本机 `dns`。DNS 已成功而本地初始化失败返回 `503 setup_local_persistence`，保留恢复意图，修复后重新预览并提交；不自动撤销外部 DNS。
+
+之后可在认证接口 `POST /settings/dns` 中按 `{ "provider": "cloudflare", "token": "…", "enable": true }` 启用所选 DNS-01；该接口要求登录会话、精确 Origin 与 CSRF Token。密钥只写入受限 secret 文件，响应、日志和状态接口不回显。外部模式不读取或保存本地 Token。
 
 正常模式提供以下已认证管理接口：
 
@@ -105,7 +107,7 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 | POST | `/settings/console/complete` | `{revision,confirm:true}`；从新入口认证访问后确认交接完成，生成移除旧地址的草稿，另行发布 |
 | POST | `/settings/dns/preview` | `{domain_id,address}`；用已保存服务端 Token 预览登记域名的 DNS 记录，不写入 |
 | POST | `/settings/dns/confirm` | `{domain_id,address,fingerprint,confirm:true}`；按预览指纹确认写入，冲突要求重新预览 |
-| POST | `/settings/cloudflare` | `{token,enable:true}`；认证、精确 Origin 与 CSRF 校验后启用内置 DNS-01 |
+| POST | `/settings/dns` | `{provider,token,enable:true}`；认证、精确 Origin 与 CSRF 校验后启用内置 DNS-01 |
 
 历史与审计支持 `offset`、`limit`，默认每页 20，最多 100，响应为 `{items,offset,limit}`。服务列表在前端按关键词、域名和启用状态组合筛选。
 

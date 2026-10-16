@@ -62,7 +62,7 @@ it('requires new credentials and DNS confirmation after importing in embedded mo
  expect(screen.getByRole('button',{name:'完成初始化'})).toBeDisabled()
  fireEvent.click(screen.getByRole('checkbox',{name:/确认导入配置/}));fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByText('初始化已完成')
  const body=JSON.parse(fetch.mock.calls.find(([path])=>path.endsWith('/complete'))![1].body)
- expect(body.cloudflare).toMatchObject({token:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',address:'192.168.2.6',fingerprint:'import-dns',confirmed:true})
+ expect(body.dns).toMatchObject({token:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',address:'192.168.2.6',fingerprint:'import-dns',confirmed:true})
  expect(body.services).toEqual(config.services)
 })
 
@@ -81,7 +81,7 @@ it('requires missing imported resolvers to be filled and confirms an empty draft
  fireEvent.click(screen.getByRole('checkbox',{name:/确认导入配置/}));fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByText('初始化已完成')
  const body=JSON.parse(fetch.mock.calls.find(([path])=>path.endsWith('/complete'))![1].body)
  expect(body.services).toEqual([]);expect(body.confirm_import).toBe(true)
- expect(body.settings.resolvers).toEqual(['192.168.2.1']);expect(body).not.toHaveProperty('cloudflare')
+ expect(body.settings.resolvers).toEqual(['192.168.2.1']);expect(body).not.toHaveProperty('dns')
 })
 it('does not silently adopt an unsupported legacy setup configuration',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({initialized:false})));render(<Setup pollLogin={false}/>);await screen.findByLabelText('管理员密码');await upload({...config,settings:{...config.settings,admin_domain:'custom.home.example.com'}});fireEvent.click(await screen.findByRole('button',{name:'采用导入配置'}));expect(await screen.findByRole('alert')).toHaveTextContent(/暂不支持通过初始化导入/);expect(screen.queryByText(/已采用配置/)).not.toBeInTheDocument()})
 

@@ -34,12 +34,12 @@ func (s *Store) SetCertificateStatusAudit(ctx context.Context, status Certificat
 		if err := setCertificateStatus(ctx, tx, status); err != nil {
 			return err
 		}
-		return auditWith(ctx, tx, auditRow{Time: now(), Actor: actor, Action: "certificate.activation", Object: "cloudflare", Result: result})
+		return auditWith(ctx, tx, auditRow{Time: now(), Actor: actor, Action: "certificate.activation", Object: string(status.Mode), Result: result})
 	})
 }
 
 func setCertificateStatus(ctx context.Context, db *gorm.DB, status CertificateStatus) error {
-	if status.Mode != CertificateModeBootstrapInternal && status.Mode != CertificateModeCloudflare {
+	if status.Mode != CertificateModeBootstrapInternal && status.Mode != CertificateModeCloudflare && status.Mode != CertificateMode("dnspod") {
 		return invalid("证书策略无效")
 	}
 	switch status.ActivationStatus {

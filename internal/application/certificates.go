@@ -56,7 +56,7 @@ func (service *Service) requireServiceCertificates(ctx context.Context, settings
 		if !registered {
 			return domain.Conflict("请先单独发布域名配置，待证书就绪后再发布其业务服务")
 		}
-		query := service.certificateQuery(domain.CertificateModeCloudflare)
+		query := service.certificateQuery(service.options.CertificateMode)
 		query.Domains = []string{name}
 		if service.certificates == nil || !service.certificates.PublicReady(ctx, query) {
 			return domain.Conflict("域名证书尚未验证可信，请等待签发后重新校验")
@@ -85,7 +85,7 @@ func (service *Service) CertificateState(ctx context.Context) (domain.Certificat
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	status, err := service.repository.CertificateStatus(ctx)
-	if err != nil || status.Mode != domain.CertificateModeCloudflare || service.options.TestTLS {
+	if err != nil || !domain.IsPublicCertificateMode(status.Mode) || service.options.TestTLS {
 		return status, err
 	}
 	publicStatus := "unknown"
@@ -172,9 +172,9 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 		return domain.CertificateStatus{}, err
 	}
 	if service.externalCaddy() || service.options.TestTLS {
-		return domain.CertificateStatus{}, domain.Invalid("当前部署模式不支持在本机启用 Cloudflare")
+		return domain.CertificateStatus{}, domain.Invalid("当前部署模式不支持在本机启用 DNS 证书")
 	}
-	if err := domain.ValidateCloudflareToken(token); err != nil {
+	if err := domain.ValidateDNSToken(service.dnsProvider(), token); err != nil {
 		return domain.CertificateStatus{}, err
 	}
 	if service.secrets == nil || service.snapshot == nil || service.bootstrapTLS == nil {
@@ -184,11 +184,11 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 	if err != nil {
 		return domain.CertificateStatus{}, err
 	}
-	if current.Mode == domain.CertificateModeCloudflare && current.ActivationStatus == "success" {
-		if err = service.secrets.WriteCloudflareToken(token); err != nil {
+	if domain.IsPublicCertificateMode(current.Mode) && current.ActivationStatus == "success" {
+		if err = service.writeDNSToken(service.dnsProvider(), token); err != nil {
 			return current, err
 		}
-		if err = service.repository.Audit(ctx, actor, "certificate.token", "cloudflare", "saved", 0, 0); err != nil {
+		if err = service.repository.Audit(ctx, actor, "certificate.token", string(service.dnsProvider()), "saved", 0, 0); err != nil {
 			return current, err
 		}
 		return current, nil
@@ -198,7 +198,7 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 		return domain.CertificateStatus{}, err
 	}
 	config := service.caddyConfig()
-	config.CertificateMode, config.TemporaryAdminCertificate = domain.CertificateModeCloudflare, true
+	config.CertificateMode, config.TemporaryAdminCertificate = domain.CertificateMode(service.dnsProvider()), true
 	if err = service.bootstrapTLS.Ensure(config.TemporaryAdminCertPath, config.TemporaryAdminKeyPath, service.activeSettings().Origin); err != nil {
 		return domain.CertificateStatus{}, err
 	}
@@ -218,14 +218,14 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 	if beforeHash != domain.Fingerprint(beforeSnapshot) {
 		return domain.CertificateStatus{}, domain.Conflict("检测到 Caddy 配置漂移；请先核对并处理运行配置")
 	}
-	status := domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "applying", PublicStatus: "pending", BeforeHash: beforeHash, CandidateHash: candidateHash}
+	status := domain.CertificateStatus{Mode: domain.CertificateMode(service.dnsProvider()), ActivationStatus: "applying", PublicStatus: "pending", BeforeHash: beforeHash, CandidateHash: candidateHash}
 	persist := func(result string) error {
 		return service.repository.SetCertificateStatusAudit(ctx, status, actor, result)
 	}
 	if err = persist("applying"); err != nil {
 		return domain.CertificateStatus{}, err
 	}
-	if err = service.secrets.WriteCloudflareToken(token); err != nil {
+	if err = service.writeDNSToken(service.dnsProvider(), token); err != nil {
 		status.Mode, status.ActivationStatus, status.PublicStatus = domain.CertificateModeBootstrapInternal, "failed", "unknown"
 		status.LastErrorClass, status.BeforeHash, status.CandidateHash = "unavailable", "", ""
 		_ = persist("failed")
@@ -250,9 +250,20 @@ func (service *Service) ActivateCloudflare(ctx context.Context, token, actor str
 }
 
 func (service *Service) BuildInfo(ctx context.Context) (string, bool) {
+	if c, ok := service.caddy.(interface {
+		DNSBuildInfo(context.Context, domain.DNSProvider) (string, bool)
+	}); ok {
+		return c.DNSBuildInfo(ctx, service.dnsProvider())
+	}
 	return service.caddy.BuildInfo(ctx)
 }
 
 func (service *Service) TokenConfigured() bool {
-	return service.secrets != nil && service.secrets.CloudflareTokenConfigured()
+	if service.secrets == nil {
+		return false
+	}
+	if c, ok := service.secrets.(interface{ DNSTokenConfigured(domain.DNSProvider) bool }); ok {
+		return c.DNSTokenConfigured(service.dnsProvider())
+	}
+	return service.dnsProvider() == domain.DNSProviderCloudflare && service.secrets.CloudflareTokenConfigured()
 }

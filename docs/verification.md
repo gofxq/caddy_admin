@@ -7,7 +7,7 @@
 | `make test` | Go race 测试与前端 Vitest，不启动浏览器 |
 | `make check` | Go vet 与两个 Go 模块的依赖校验 |
 | `make build` | Manager 构建、严格 TypeScript 与 Vite 构建 |
-| `make integration` | 构建固定 Caddy，验证生成、加载、快照恢复、Cloudflare secret-file，以及服务压缩/头/响应头超时、HTTP/2 gRPC 和上游 TLS 拒绝 |
+| `make integration` | 构建固定 Caddy，验证生成、加载、快照恢复、Cloudflare/DNSPod secret-file，以及服务压缩/头/响应头超时、HTTP/2 gRPC 和上游 TLS 拒绝 |
 | `make container-test` | 临时容器中验证环境预配置自动初始化、DNS 人工接续、内置 HTTP 初始化与 HTTPS 切换、外部 HTTPS 初始化、登录、配置导入导出、发布边界、重启与失联处理；需要 Docker、Python、curl |
 | `make web` | `127.0.0.1:5177` 演示界面，仅用于界面检查 |
 | `make web-demo` | 安装依赖并构建、预览纯静态 Demo（`127.0.0.1:5178`），仅用于界面检查 |
@@ -65,7 +65,7 @@ Vitest 使用 DOM 模拟环境。真实浏览器中的原生离开确认、移�
 
 自动测试另覆盖 Counter 重置/断采/发布归属、Histogram 插值、五级存储、历史范围边界、服务 ID 不串接、数据库权限、日志去重/持久化游标/首次截断/历史服务恢复、CAA 分类脱敏、低流量和缺口的告警 unknown、确认持久化、会话/CSRF/参数拒绝及前端筛选和诊断交互。
 
-真实浏览器与移动端、长期高负载、宿主磁盘耗尽/写盘卡顿、外部 Caddy 模块安装与网络拓扑、真实 ACME/Cloudflare 签发续期仍需专用环境验收。自动测试不构成这些环境的部署验收。外部通知、原始日志检索和应用 HTTP 健康检查不在本版范围。
+真实浏览器与移动端、长期高负载、宿主磁盘耗尽/写盘卡顿、外部 Caddy 模块安装与网络拓扑、真实 ACME/Cloudflare/DNSPod 签发续期仍需专用环境验收。自动测试不构成这些环境的部署验收。外部通知、原始日志检索和应用 HTTP 健康检查不在本版范围。
 
 ## 环境预配置自动初始化验收
 
@@ -73,7 +73,7 @@ Go/application 与 API 测试覆盖必需参数缺失和空白地址、非法非
 
 完整预配置无警告时打开 IP 应直接观察后台初始化并进入交接；参数不足时三步向导，不能用现有 DNS 推断缺失入口地址。首次服务为空，业务上线仍须校验并确认发布。初始化后的参数变化不得重置密码、Token 或线上配置。测试 CA、服务器 DNS 和服务端探测不能误报公网信任或浏览器可达。
 
-隔离容器场景模拟 Cloudflare 与服务器 DNS，仅使用生成的测试 CA、假 Token 和临时数据；运行真实 Manager/Caddy 验证启动自动初始化、IP 进度、HTTPS 登录、重启保留数据及已有实例忽略非法首次参数。它不代表真实 Cloudflare DNS Edit 权限、公网 DNS 传播或 ACME 签发验收，后者仍需专用测试环境。
+隔离容器场景分别模拟 Cloudflare、DNSPod 与服务器 DNS，仅使用生成的测试 CA、假 Token 和临时数据；运行真实 Manager/Caddy 验证启动自动初始化、IP 进度、HTTPS 登录、重启保留数据及已有实例忽略非法首次参数。它不代表真实 Cloudflare DNS Edit 权限、公网 DNS 传播或 ACME 签发验收，后者仍需专用测试环境。
 
 自动流程与观测页重检测试另覆盖 DoH 优先顺序、A/AAAA、随机通配符探测、NXDOMAIN、问题名不匹配、无关回答、查询失败脱敏与重检并发/旧 setup_id/未决结果拒绝；重检通过也不得创建管理员、写入 DNS、secret 或快照。隔离容器使用本地可信 HTTPS DoH/Cloudflare 模拟，验证重复重检仍只读。服务器 DNS 预检仍独立执行；DoH 正确不证明证书校验解析器可达。
 
@@ -99,3 +99,5 @@ Go/application 与 API 测试覆盖必需参数缺失和空白地址、非法非
 本功能已通过 `make test`（根模块 Go race、Caddy 观测模块 race、前端 246 项）、`make check` 和 `make build`。测试在允许隔离回环端口的环境中执行；构建仍有既有的前端单包超过 500 kB 提示。
 
 真实浏览器中的移动布局、键盘导航、长配置滚动和真实 Caddy 读取仍需环境验收；DOM 测试与端口替身测试不能替代真实部署验收。
+
+DNSPod 自动测试覆盖提供商选择、凭据隔离、DNS API 分页与线路冲突、写入响应丢失、重启后意图保护、schema v7→v8 事务升级和真实 Caddy DNSPod 模块校验；不代表真实 DNSPod 权限、传播、签发或续期验收。

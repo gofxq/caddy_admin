@@ -46,12 +46,12 @@ func (service *Service) RecheckAutomaticSetup(ctx context.Context, setupID strin
 	defer cancel()
 	_, preflight, ready := service.checkAutomaticSetup(checkCtx, defaults)
 	if ready {
-		service.setSetupProgress("action_required", "preflight", "DoH、Cloudflare 记录与服务器预检已满足初始化条件；控制台服务器 DNS 未解析仅作提示。本次只重新检查，未保存初始化数据。请进入向导核对并明确确认完成初始化。", preflight.Checks...)
+		service.setSetupProgress("action_required", "preflight", "DoH、DNS 记录与服务器预检已满足初始化条件；控制台服务器 DNS 未解析仅作提示。本次只重新检查，未保存初始化数据。请进入向导核对并明确确认完成初始化。", preflight.Checks...)
 	}
 	return service.AutomaticSetupProgress(), nil
 }
 
-// Both startup and explicit rechecks share the same DoH -> Cloudflare read-only
+// Both startup and explicit rechecks share the same DoH -> DNS read-only
 // preview -> server preflight order. Only the original startup caller may save.
 func (service *Service) checkAutomaticSetup(ctx context.Context, defaults SetupDefaults) (SetupDNSPlan, SetupPreflight, bool) {
 	service.setSetupProgress("running", "doh", "")
@@ -61,7 +61,7 @@ func (service *Service) checkAutomaticSetup(ctx context.Context, defaults SetupD
 		dohCheck.Status = "warning"
 	}
 	service.setSetupProgress("running", "dns", "", dohCheck)
-	plan, err := service.setupDNS.Preview(ctx, service.options.SetupToken, defaults.Domain, defaults.Address)
+	plan, err := service.PreviewSetupDNSProvider(ctx, service.dnsProvider(), service.setupToken(service.dnsProvider()), defaults.Domain, defaults.Address)
 	if err != nil {
 		service.setSetupProgress("failed", "dns", safeAutomaticSetupError(err), dohCheck)
 		return plan, SetupPreflight{}, false
@@ -71,7 +71,7 @@ func (service *Service) checkAutomaticSetup(ctx context.Context, defaults SetupD
 		return plan, SetupPreflight{}, false
 	}
 	if dohCheck.Status != "pass" {
-		service.setSetupProgress("action_required", "doh", "Cloudflare 记录已匹配，但 DoH 解析未通过；请检查传播、缓存或 DoH 网络后重新检查，尚未保存初始化数据", dohCheck)
+		service.setSetupProgress("action_required", "doh", "DNS 记录已匹配，但 DoH 解析未通过；请检查传播、缓存或 DoH 网络后重新检查，尚未保存初始化数据", dohCheck)
 		return plan, SetupPreflight{}, false
 	}
 	service.setSetupProgress("running", "preflight", "", dohCheck)

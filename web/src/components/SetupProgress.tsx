@@ -36,7 +36,7 @@ export function SetupProgress({ progress, offline, loading, rechecking, retryErr
     return <div className="setup-screen"><section className="setup-card">
         <div className="setup-brand"><Waypoints /><span>Caddy Admin</span></div>
         <h1>{title}</h1>
-        <p className="muted">{rechecking ? '正在重新查询 DoH、读取 Cloudflare 记录并执行预检；不修改 DNS 或保存初始化数据。' : running ? '后台任务由服务启动触发，关闭页面不会取消。页面只读取进度。' : '自动流程已暂停，页面会保留当前状态。由你选择进入向导处理，不会自动提交或跳过确认。'}</p>
+        <p className="muted">{rechecking ? '正在重新查询 DoH、读取 DNS 记录并执行预检；不修改 DNS 或保存初始化数据。' : running ? '后台任务由服务启动触发，关闭页面不会取消。页面只读取进度。' : '自动流程已暂停，页面会保留当前状态。由你选择进入向导处理，不会自动提交或跳过确认。'}</p>
         <p className="muted">新实例默认不限制控制台来源，业务域名允许互联网访问，可信与上游网段覆盖全部 IPv4/IPv6，许可全部合法服务名。管理操作须登录；初始化仅建立控制台，业务服务须另行发布，之后服务导览会展示公开服务的名称和域名。</p>
         <ol className="setup-progress" aria-label="自动初始化进度">{stages.map((stage, index) => <li key={stage.id} aria-current={index === currentStage ? 'step' : undefined}>{stage.label}{index === currentStage ? running ? '（正在执行）' : '（需处理）' : index < currentStage ? '（已完成）' : '（尚未执行）'}</li>)}</ol>
         {progress.message && <p className={`notice notice-${progress.status === 'failed' ? 'red' : 'amber'}`} role="status">{progress.message}</p>}

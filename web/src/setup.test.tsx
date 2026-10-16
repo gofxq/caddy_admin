@@ -303,7 +303,7 @@ it('previews Cloudflare DNS and binds explicit confirmation to initialization',a
  fireEvent.click(screen.getByRole('checkbox',{name:/确认.*DNS/}));await confirmAndCheck();fireEvent.click(screen.getByRole('button',{name:'下一步'}));await screen.findByRole('heading',{name:'确认配置'});fireEvent.click(screen.getByRole('button',{name:'完成初始化'}))
  await waitFor(()=>expect(fetch.mock.calls.some(c=>c[0].endsWith('/complete'))).toBe(true))
  const options=fetch.mock.calls.find(c=>c[0].endsWith('/complete'))![1] as RequestInit
- expect(JSON.parse(options.body as string).cloudflare).toEqual({token:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',use_configured_token:false,setup_id:'',address:'192.168.1.6',fingerprint:'dns-preview',confirmed:true})
+ expect(JSON.parse(options.body as string).dns).toEqual({provider:'cloudflare',token:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',use_configured_token:false,setup_id:'',address:'192.168.1.6',fingerprint:'dns-preview',confirmed:true})
  expect(screen.getByRole('link',{name:'通过临时入口继续登录'})).toHaveAttribute('href','https://192.168.1.6/')
 })
 

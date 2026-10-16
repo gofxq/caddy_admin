@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 var currentSchemaModels = []any{
 	&schemaVersionRow{},
@@ -43,6 +43,37 @@ func initializeOrValidateSchema(db *gorm.DB) error {
 	var versions []schemaVersionRow
 	if err = db.Find(&versions).Error; err != nil {
 		return err
+	}
+	if len(versions) == 1 && versions[0].Version == 7 {
+		return db.Transaction(func(tx *gorm.DB) error {
+			var tableSQL string
+			if err := tx.Raw("SELECT sql FROM sqlite_master WHERE type='table' AND name='certificate_state'").Scan(&tableSQL).Error; err != nil {
+				return err
+			}
+			if !strings.Contains(tableSQL, "dnspod") {
+				tableSQL = strings.Replace(tableSQL, "mode = 'bootstrap_internal' OR mode = 'cloudflare'", "mode = 'bootstrap_internal' OR mode = 'cloudflare' OR mode = 'dnspod'", 1)
+			}
+			if !strings.Contains(tableSQL, "dnspod") {
+				return fmt.Errorf("unsupported certificate schema")
+			}
+			if err := tx.Exec("ALTER TABLE certificate_state RENAME TO certificate_state_v7").Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(tableSQL).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("INSERT INTO certificate_state SELECT * FROM certificate_state_v7").Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("DROP TABLE certificate_state_v7").Error; err != nil {
+				return err
+			}
+
+			if err := tx.Model(&schemaVersionRow{}).Where("version = ?", 7).Update("version", currentSchemaVersion).Error; err != nil {
+				return err
+			}
+			return validateV7(tx)
+		})
 	}
 	if len(versions) != 1 || versions[0].Version != currentSchemaVersion {
 		return fmt.Errorf("unsupported or malformed database schema version")

@@ -3,6 +3,8 @@ package application
 import "github.com/gofxq/caddy_admin/internal/domain"
 
 type Options struct {
+	DNSProvider     domain.DNSProvider
+	SetupTokens     map[domain.DNSProvider]string
 	SetupDefaults   SetupDefaults
 	SetupPassword   string
 	SetupToken      string

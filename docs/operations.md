@@ -36,7 +36,7 @@ Setup 不按 TCP 来源是否私网或 Host 是否私网 IP 拒绝访问，公�
 | Cloudflare（默认） | `https://cloudflare-dns.com/dns-query` | [JSON DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/) |
 | Google | `https://dns.google/resolve` | [JSON DoH](https://developers.google.com/speed/public-dns/docs/doh/json) |
 
-内置模式的「首个域名与 DNS」步骤填写或确认使用已配置 Cloudflare Token 与实际 Caddy IP，先点击「检查 DNS」。服务器读取 Cloudflare 核对 Token 的目标域名访问权限以及 `*.<首个基础域名>` 的 A/AAAA 记录，浏览器核对解析地址；已有记录符合要求且解析通过即可直接继续，不需要 DNS 配置确认，也不写入 DNS。展开「获取 Token 与权限」可查看[创建 Token](https://dash.cloudflare.com/profile/api-tokens)和[官方说明](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)；只授权目标 Zone 的 Zone Read、DNS Edit。仅需新增或修改记录时才展示 DNS 变更预览；勾选变更影响后点击「确认配置」，立即配置「仅 DNS（灰云）」，这个按钮不等待 DNS 生效。再单独点击「检查 DNS」，结果表展示所选 DoH 查询的控制台和随机一层子域、返回 IP 及检查结果。A 与 AAAA 均须查询成功，没有 AAAA 地址可接受；任一查询失败、返回非目标地址或全部无地址均不通过，保留成功返回的地址。空回答提示可能未配置或被过滤，NXDOMAIN、HTTP/网络失败和超时分别提示。所有返回地址须符合目标 IP；未生效、地址不符或失败时保留输入，可直接重查，无需重复写入。已有记录已核对或变更已确认写入，并且查询通过后才能继续；更换 DoH 只要求重查，不清空已确认的记录；域名、目标 IP 或 Token 改变须重新检查，需要变更时重新预览确认。最终提交由服务器重新预检并核对 Cloudflare 记录与检查或确认指纹，不再通过普通 DNS 解析强制阻断初始化。初始化完成后自动申请证书。当前访问 IP 仅是建议，localhost 与外部模式须填写实际 Caddy 地址；内网 IP 仅对能到达该网络的设备可用。
+内置模式的「首个域名与 DNS」步骤填写或确认使用已配置 DNS Token 与实际 Caddy IP，先点击「检查 DNS」。服务器读取所选提供商核对 Token 的目标域名访问权限以及 `*.<首个基础域名>` 的 A/AAAA 记录，浏览器核对解析地址；已有记录符合要求且解析通过即可直接继续，不需要 DNS 配置确认，也不写入 DNS。展开「获取 Token 与权限」可查看[创建 Token](https://dash.cloudflare.com/profile/api-tokens)和[官方说明](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)；只授权目标 Zone 的 Zone Read、DNS Edit。仅需新增或修改记录时才展示 DNS 变更预览；勾选变更影响后点击「确认配置」，Cloudflare 配置「仅 DNS（灰云）」、DNSPod 配置默认线路，这个按钮不等待 DNS 生效。再单独点击「检查 DNS」，结果表展示所选 DoH 查询的控制台和随机一层子域、返回 IP 及检查结果。A 与 AAAA 均须查询成功，没有 AAAA 地址可接受；任一查询失败、返回非目标地址或全部无地址均不通过，保留成功返回的地址。空回答提示可能未配置或被过滤，NXDOMAIN、HTTP/网络失败和超时分别提示。所有返回地址须符合目标 IP；未生效、地址不符或失败时保留输入，可直接重查，无需重复写入。已有记录已核对或变更已确认写入，并且查询通过后才能继续；更换 DoH 只要求重查，不清空已确认的记录；域名、目标 IP 或 Token 改变须重新检查，需要变更时重新预览确认。最终提交由服务器重新预检并核对 所选提供商的记录与检查或确认指纹，不再通过普通 DNS 解析强制阻断初始化。初始化完成后自动申请证书。当前访问 IP 仅是建议，localhost 与外部模式须填写实际 Caddy 地址；内网 IP 仅对能到达该网络的设备可用。
 
 相同记录直接复用；地址或代理状态不同会显示旧值并要求确认，确认后记录再变化则返回冲突。CNAME、同类型重复记录或覆盖通配符的控制台精确记录不一致时阻断；保留另一地址类型并提示其访问影响，不修改其他记录。外部模式仍提供手动 DNS 指引，远端凭据由外部 Caddy 管理。DNS-01 签发无需向公网开放入站端口。
 
@@ -44,7 +44,7 @@ DNS 与本地初始化不能跨服务原子提交。Token 写入受限 secret �
 
 浏览器检查控制台和随机一层子域。提供目标 IP 时，全部地址必须与目标一致；外部或测试模式可不填目标 IP，此时只检查是否有解析结果并明确说明未核对目标。外部和测试模式查询可选，不自动写入 DNS。浏览器 DoH 通过不证明设备可达、服务器 DNS 可用或 HTTPS 已就绪；服务器未解析到控制台地址仅作提示，不阻止初始化；解析器不可达等其他警告仍须阅读影响并确认。
 
-第一个有效提交原子创建管理员，并发输家返回 409。预检警告需明确确认，确认绑定规范化设置与具体警告；最终复检出现新增或变化的警告时保留输入、刷新预检并要求重新确认，不能沿用旧勾选。页面不在提交前重复请求预检，可手动「重新预检」。内置自动 DNS 的浏览器目标 IP 查询必须通过才能从页面继续；API 最终完成仍核对实际 Cloudflare 记录、变更指纹、网络安全策略与已有快照归属，不信任浏览器传回的 DNS 结果。密码和 Token 可通过 Setup 手动输入或部署环境预配置确认使用；Token 自动写入受限运行文件，不回显、不记日志，不将真实凭据提交版本控制。
+第一个有效提交原子创建管理员，并发输家返回 409。预检警告需明确确认，确认绑定规范化设置与具体警告；最终复检出现新增或变化的警告时保留输入、刷新预检并要求重新确认，不能沿用旧勾选。页面不在提交前重复请求预检，可手动「重新预检」。内置自动 DNS 的浏览器目标 IP 查询必须通过才能从页面继续；API 最终完成仍核对所选提供商的实际 DNS 记录、变更指纹、网络安全策略与已有快照归属，不信任浏览器传回的 DNS 结果。密码和 Token 可通过 Setup 手动输入或部署环境预配置确认使用；Token 自动写入受限运行文件，不回显、不记日志，不将真实凭据提交版本控制。
 
 初始化后的 IP HTTPS 入口提供交接状态；内置模式还允许受认证、Origin 和 CSRF 保护；仅显式启用控制台限制时再执行 LAN 校验的登录与管理操作。Caddy 经容器回环桥接转发并覆盖客户端地址头，未知域名返回 404。浏览器实际从正式入口认证访问后，临时入口保留五分钟再关闭。外部模式的交接入口只提供静态页面和只读状态。
 
@@ -64,7 +64,7 @@ services:
 
 默认 Compose 使用 `ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}` 与 `CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}`；未设置或为空时向导手动输入。Compose YAML 中的字面 `$` 写为 `$$`。不要提交真实凭据，注意本地部署文件和环境变量的访问权限。
 
-普通手动流程中，已配置项在 Setup 只显示可用状态并要求勾选使用；非法非空值明确阻断，修改后重建容器、重新读取状态和确认。重建前页面的 `setup_id` 确认无效。外部与测试模式不使用本地 Token。首次确认使用后应用自动将 Token 原子保存到 `${DATA_DIR}/secrets/cloudflare_token`，密码仅保存 Argon2id 哈希；环境密码只用于未初始化实例，不会重置已有密码。初始化后以持久化 Token 为准，重启不会用旧环境 Token 覆盖设置页更新的值。
+普通手动流程中，已配置项在 Setup 只显示可用状态并要求勾选使用；非法非空值明确阻断，修改后重建容器、重新读取状态和确认。重建前页面的 `setup_id` 确认无效。外部与测试模式不使用本地 Token。首次确认使用后应用按提供商将 Token 原子保存到 `${DATA_DIR}/secrets/cloudflare_token` 或 `${DATA_DIR}/secrets/dnspod_token`，密码仅保存 Argon2id 哈希；环境密码只用于未初始化实例，不会重置已有密码。初始化后以持久化 Token 为准，重启不会用旧环境 Token 覆盖设置页更新的值。
 
 完整预配置可让内置正式模式自动初始化：
 
@@ -78,9 +78,26 @@ environment:
   SETUP_RESOLVERS: 1.1.1.1
 ```
 
-默认 Compose 保留空值，不要求所有部署者配置自动路径。四个必需项齐全才预检；先检查服务端 DoH，再核对 Cloudflare 记录与服务器解析器；只读复用 DNS、DoH 通过且预检无阻断或需确认的警告时保存并重启。服务器未解析到控制台地址仅作提示；其他不满足条件的情况通过 IP 状态观测页说明暂停原因，由用户点击「进入向导处理」接回手动确认。`SETUP_RESOLVERS` 不改变系统上游解析器。正式规则见[环境预配置](setup.md#环境预配置自动初始化)。
+默认 Compose 保留空值，不要求所有部署者配置自动路径。管理员密码、所选提供商 Token、域名、入口 IP 四项齐全才预检；先检查服务端 DoH，再核对 所选提供商的记录与服务器解析器；只读复用 DNS、DoH 通过且预检无阻断或需确认的警告时保存并重启。服务器未解析到控制台地址仅作提示；其他不满足条件的情况通过 IP 状态观测页说明暂停原因，由用户点击「进入向导处理」接回手动确认。`SETUP_RESOLVERS` 不改变系统上游解析器。正式规则见[环境预配置](setup.md#环境预配置自动初始化)。
 
 自动初始化失败时保留四个持久化目录。若已有初始化意图或未知归属快照，先核对数据库、受限 `setup_dns_intent.json` 中的快照指纹与 `active.json`，确认管理员是否已创建；状态不可读时修复存储后重启核对，不能删除数据或盲目重复提交。数据库提交响应丢失时先检查实际初始化状态，已保存则进入交接；不能因证书失败重新初始化。DNS 已生效但本地失败时不会自动回滚 DNS，确认原记录后由手动向导复用。重启后的首次参数变化不改写已初始化状态。
+
+### DNSPod 配置
+
+默认提供商为 Cloudflare；Setup 第二步可选择 DNSPod，或在 `.env` 配置：
+
+```dotenv
+DNS_PROVIDER=dnspod
+DNSPOD_TOKEN=12345,replace-with-your-dnspod-token
+```
+
+这里是 DNSPod API 的 `ID,Token`，不是腾讯云 SecretId/SecretKey。凭据须有目标域名的读取和 DNS 记录修改权限。内置镜像已包含对应 Caddy 模块，无需自行构建；DNSPod 仅自动管理默认线路的正常启用记录，分线路、重复记录、CNAME/NS 或控制台精确记录冲突须先人工核对。Cloudflare 仍要求「仅 DNS」，DNSPod 无灰云开关。DNS 提供商选择与浏览器 DoH 选择相互独立。
+
+DNSPod Token 保存到 `${DATA_DIR}/secrets/dnspod_token`（可用 `DNSPOD_TOKEN_FILE` 自定义路径）；Cloudflare 使用 `cloudflare_token`。初始化后数据库保存的提供商与对应文件优先，ENV 不会切换已初始化实例。设置页可更新当前提供商 Token，默认内置运行方式会重启服务加载新凭据。当前不提供初始化后的提供商切换入口。
+
+DNSPod 写入后记录列表可能延迟可见。若写入响应丢失或核对未完成，持久化意图会阻止再次写入；重新检查发现目标记录后复用完成。持续缺失时须先在 DNSPod 控制台核对实际操作及本地意图，不能删除运行数据或盲目重试来绕过保护。
+
+外部 Caddy 必须自行安装所选 DNS 模块并配置对应环境凭据；Manager 不向远端传输密钥。本地模块检查和校验不证明远端凭据、模块或 ACME 可用。
 
 ## 配置迁移
 
@@ -173,7 +190,7 @@ docker compose -f compose.yaml -f compose.external.yaml up -d
 
 默认 Setup 地址为 `https://服务器IP:8082/setup`。端口被占用时启动报错，不会自动分配其他端口；可通过 `SETUP_BIND` 显式调整绑定地址或端口。查询映射：`docker compose -f compose.yaml -f compose.external.yaml port caddy 8082`。宿主 80/443 由外部 Caddy 所有。HTTPS Admin API 验证系统信任链且不跟随重定向；不可达时不回退到内置实例。
 
-首次 Setup 只写本地状态和基线快照。外部 Caddy 需预先将控制台域名反代到 `MANAGER_DIAL`，自行配置 Cloudflare 凭据。正式入口就绪后登录、校验并确认首次发布。发布保留远端实际 `admin`/`storage`，其余业务由本项目完整管理；本地校验不能证明远端模块、凭据或存储可用。
+首次 Setup 只写本地状态和基线快照。外部 Caddy 需预先将控制台域名反代到 `MANAGER_DIAL`，自行配置 DNS 提供商与凭据。正式入口就绪后登录、校验并确认首次发布。发布保留远端实际 `admin`/`storage`，其余业务由本项目完整管理；本地校验不能证明远端模块、凭据或存储可用。
 
 内外模式切换前停服并保护两端数据，核对启动快照与目标实例兼容性；项目不会自动迁移快照，也不会自动发布到另一实例。
 
@@ -219,3 +236,7 @@ GitHub Actions 的 `verify` 工作流在默认分支 push 或手动运行时，�
 外部 Caddy 需要以 `deploy/caddy` 相同模块构建运行；项目不会自动更换远端二进制。设置开关仅在确认发布时进入生成配置，普通采集只读远端 Admin API。远端无模块、日志不可用或 metrics 不可达显示 unknown/unavailable；HTTPS 信任链和禁止重定向规则不变。外部日志文件保存在外部 Caddy 的 AppDataDir，Manager 通过既有 Admin 连接读取脱敏 ring，不挂载远端磁盘或 Docker Socket。外部证书和日志源另行保护。
 
 周期 TCP 检查来自 Manager，每分钟最多 4 个服务，服务多时每个服务的检查间隔相应增加；只连接已发布、安全校验的地址快照，不重新解析并连接新地址。TCP 成功不代表 HTTP、HTTPS 证书或应用健康。指标告警需要完整 5 分钟和至少 20 个完成请求，日志和签发线索仅供定位，不自动发布、回滚或重试证书签发。
+
+## 数据库版本
+
+当前 schema 为 v8；启动时仅接受 v8 或将 v7 在事务内升级为 v8，以允许持久化 DNSPod 证书模式。升级不改写历史草稿、历史发布 JSON 或启动快照；v6 及更早版本仍明确拒绝。升级前按上述停服一致性快照要求保护数据。

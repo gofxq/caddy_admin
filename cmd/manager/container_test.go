@@ -34,16 +34,19 @@ func TestContainerCommandsSelectExternalOrEmbeddedCaddy(t *testing.T) {
 	}
 }
 
-func TestCloudflareTokenRequiredOnlyForActiveEmbeddedIssuer(t *testing.T) {
+func TestDNSTokenRequiredOnlyForActiveEmbeddedIssuer(t *testing.T) {
 	c := config.Default()
-	if needsCloudflareToken(c, domain.CertificateModeBootstrapInternal) {
+	if needsDNSToken(c, domain.CertificateModeBootstrapInternal) {
 		t.Fatal("bootstrap mode incorrectly requires Cloudflare token")
 	}
-	if !needsCloudflareToken(c, domain.CertificateModeCloudflare) {
+	if !needsDNSToken(c, domain.CertificateModeCloudflare) {
 		t.Fatal("active embedded Cloudflare issuer must require its secret")
 	}
+	if !needsDNSToken(c, domain.CertificateModeDNSPod) {
+		t.Fatal("DNSPod must require its saved token")
+	}
 	c.AdminURL = "https://external.example.com:2019"
-	if needsCloudflareToken(c, domain.CertificateModeCloudflare) {
+	if needsDNSToken(c, domain.CertificateModeCloudflare) {
 		t.Fatal("external Caddy must not require a local token")
 	}
 }
@@ -55,6 +58,7 @@ func TestCertificateActivationRecoveryFollowsBootSnapshot(t *testing.T) {
 		wantMode       domain.CertificateMode
 		wantActivation string
 	}{
+		{name: "DNSPod committed candidate", snapshotMode: domain.CertificateModeDNSPod, wantMode: domain.CertificateModeDNSPod, wantActivation: "success"},
 		{name: "committed candidate", snapshotMode: domain.CertificateModeCloudflare, wantMode: domain.CertificateModeCloudflare, wantActivation: "success"},
 		{name: "old bootstrap snapshot", snapshotMode: domain.CertificateModeBootstrapInternal, wantMode: domain.CertificateModeBootstrapInternal, wantActivation: "failed"},
 	} {
@@ -79,15 +83,18 @@ func TestCertificateActivationRecoveryFollowsBootSnapshot(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.CertificateMode = domain.CertificateModeCloudflare
+			if test.snapshotMode == domain.CertificateModeDNSPod {
+				c.CertificateMode = domain.CertificateModeDNSPod
+			}
 			cloudflare, err := domain.Generate(c.CaddyConfig(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = store.SetCertificateStatus(context.Background(), domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "uncertain", PublicStatus: "pending", BeforeHash: domain.Fingerprint(internal), CandidateHash: domain.Fingerprint(cloudflare)}); err != nil {
+			if err = store.SetCertificateStatus(context.Background(), domain.CertificateStatus{Mode: c.CertificateMode, ActivationStatus: "uncertain", PublicStatus: "pending", BeforeHash: domain.Fingerprint(internal), CandidateHash: domain.Fingerprint(cloudflare)}); err != nil {
 				t.Fatal(err)
 			}
 			snapshot := internal
-			if test.snapshotMode == domain.CertificateModeCloudflare {
+			if domain.IsPublicCertificateMode(test.snapshotMode) {
 				snapshot = cloudflare
 			}
 			if err = caddyadapter.AtomicWrite(c.ActivePath(), snapshot); err != nil {

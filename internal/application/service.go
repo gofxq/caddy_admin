@@ -10,6 +10,7 @@ import (
 )
 
 type Dependencies struct {
+	SetupDNSProviders    map[domain.DNSProvider]SetupDNS
 	UpstreamProbe        UpstreamProbe
 	SetupDNS             SetupDNS
 	SetupDoH             SetupDoH
@@ -28,6 +29,7 @@ type Service struct {
 	observer            *Observer
 	upstreamProbe       UpstreamProbe
 	upstreamMu          sync.Mutex
+	setupDNSProviders   map[domain.DNSProvider]SetupDNS
 	setupDNS            SetupDNS
 	setupDoH            SetupDoH
 	setupIntent         SetupIntentStore
@@ -66,8 +68,9 @@ func New(options Options, repository Repository, caddy CaddyPort, dependencies D
 	}
 	service := &Service{
 		options: options, repository: repository, caddy: caddy, resolver: resolver,
-		upstreamProbe: dependencies.UpstreamProbe,
-		setupDNS:      dependencies.SetupDNS, setupDoH: dependencies.SetupDoH, setupIntent: dependencies.SetupIntent,
+		upstreamProbe:     dependencies.UpstreamProbe,
+		setupDNSProviders: dependencies.SetupDNSProviders,
+		setupDNS:          dependencies.SetupDNS, setupDoH: dependencies.SetupDoH, setupIntent: dependencies.SetupIntent,
 		certificates: dependencies.Certificates, snapshot: dependencies.Snapshot,
 		secrets: dependencies.Secrets, bootstrapTLS: dependencies.BootstrapCertificate,
 		localAddresses: localAddresses, owned: map[string]struct{}{},
@@ -97,7 +100,7 @@ func (service *Service) activeSettings() domain.ManagedSettings { return *servic
 func caddyConfigForOptions(options Options) domain.CaddyConfig {
 	policy := options.RuntimePolicy
 	return domain.CaddyConfig{
-		Socket: options.Socket, AdminURL: options.AdminURL,
+		DNSProvider: options.DNSProvider, Socket: options.Socket, AdminURL: options.AdminURL,
 		MetricsEnabled: policy.MetricsEnabled, AccessLogsEnabled: policy.AccessLogsEnabled, AlertsEnabled: policy.AlertsEnabled, UpstreamChecksEnabled: policy.UpstreamChecksEnabled,
 		Domains: policy.Domains, ConsoleLANOnly: policy.ConsoleLANOnly,
 		PreviousAdminDomain: policy.PreviousAdminDomain,

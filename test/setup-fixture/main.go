@@ -1,5 +1,5 @@
-// Isolated acceptance fixture only. It implements the fixed Cloudflare HTTPS
-// target and a local DNS resolver without contacting Cloudflare or a public CA.
+// Isolated acceptance fixture only. It implements fixed provider HTTPS
+// targets and a local DNS resolver without contacting providers or a public CA.
 package main
 
 import (
@@ -31,7 +31,7 @@ func main() {
 		log.Fatal("key generation failed")
 	}
 	now := time.Now()
-	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Isolated setup fixture"}, DNSNames: []string{"api.cloudflare.com", "cloudflare-dns.com"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Isolated setup fixture"}, DNSNames: []string{"api.cloudflare.com", "cloudflare-dns.com", "dnsapi.cn"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
 	if err != nil {
 		log.Fatal("certificate generation failed")
@@ -44,12 +44,12 @@ func main() {
 	if err != nil {
 		log.Fatal("TLS fixture failed")
 	}
-	var reads, writes atomic.Int64
+	var reads, writes, dnspodReads, dnspodWrites atomic.Int64
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/stats" {
-			_ = json.NewEncoder(w).Encode(map[string]int64{"reads": reads.Load(), "writes": writes.Load()})
+			_ = json.NewEncoder(w).Encode(map[string]int64{"reads": reads.Load(), "writes": writes.Load(), "dnspod_reads": dnspodReads.Load(), "dnspod_writes": dnspodWrites.Load()})
 			return
 		}
 		if r.URL.Path == "/dns-query" {
@@ -67,6 +67,51 @@ func main() {
 				answers = append(answers, map[string]any{"name": name, "type": kind, "data": address.String()})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"Status": 0, "Question": []map[string]any{{"name": name, "type": kind}}, "Answer": answers})
+			return
+		}
+		if r.Host == "dnsapi.cn" {
+			if r.Method != http.MethodPost || r.ParseForm() != nil || r.PostForm.Get("login_token") != "12345,"+strings.Repeat("a", 32) {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": map[string]string{"code": "-1"}})
+				return
+			}
+			out := map[string]any{"status": map[string]string{"code": "1"}}
+			switch r.URL.Path {
+			case "/Domain.Info":
+				reads.Add(1)
+				dnspodReads.Add(1)
+				if r.PostForm.Get("domain") != "example.test" {
+					out["status"] = map[string]string{"code": "6"}
+				} else {
+					out["domain"] = map[string]string{"id": "test-zone", "name": "example.test"}
+				}
+			case "/Record.List":
+				reads.Add(1)
+				dnspodReads.Add(1)
+				if r.PostForm.Get("domain_id") != "test-zone" || r.PostForm.Get("offset") != "0" || r.PostForm.Get("length") != "100" {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				rows := []map[string]string{}
+				if r.PostForm.Get("sub_domain") == "*.home" {
+					rows = append(rows, map[string]string{"id": "record", "name": "*.home", "type": "A", "value": address.String(), "line_id": "0", "enabled": "1", "ttl": "600", "use_aqb": "no"})
+				} else if r.PostForm.Get("sub_domain") != "caddyadmin.home" {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				out["records"] = rows
+				total := "0"
+				if len(rows) > 0 {
+					total = "1"
+				}
+				out["info"] = map[string]string{"record_total": total}
+			default:
+				writes.Add(1)
+				dnspodWrites.Add(1)
+				w.WriteHeader(http.StatusForbidden)
+				out["status"] = map[string]string{"code": "-1"}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("a", 40) {

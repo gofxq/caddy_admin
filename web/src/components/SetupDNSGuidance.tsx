@@ -1,3 +1,4 @@
+import {dnsProviderName,type DNSProvider} from '../model'
 import {useState} from 'react'
 import {HelpTooltip} from './HelpTooltip'
 
@@ -20,7 +21,7 @@ export function suggestedDNSAddress(hostname:string):string {
  return dnsRecord(hostname)?.address??''
 }
 
-export function SetupDNSGuidance({domain,address,onAddressChange,externalCaddy,automatic=false}:{automatic?:boolean;domain:string;address:string;onAddressChange:(value:string)=>void;externalCaddy:boolean}) {
+export function SetupDNSGuidance({domain,address,onAddressChange,externalCaddy,automatic=false,provider='cloudflare'}:{provider?:DNSProvider;automatic?:boolean;domain:string;address:string;onAddressChange:(value:string)=>void;externalCaddy:boolean}) {
  const [copyStatus,setCopyStatus]=useState<'idle'|'copied'|'failed'>('idle')
  const record=dnsRecord(address)
  const name=`*.${domain}`
@@ -28,18 +29,18 @@ export function SetupDNSGuidance({domain,address,onAddressChange,externalCaddy,a
   if(!record||!domain)return
   try {
    if(!navigator.clipboard)throw new Error('clipboard unavailable')
-   await navigator.clipboard.writeText(`${record.type}\t${name}\t${record.address}\t仅 DNS（灰云）`)
+   await navigator.clipboard.writeText(`${record.type}\t${name}\t${record.address}${provider==='cloudflare'?'\t仅 DNS（灰云）':''}`)
    setCopyStatus('copied')
   } catch {setCopyStatus('failed')}
  }
- return <section className="setup-dns-guidance" aria-label="Cloudflare DNS 配置指引">
-  <div className="field-heading"><label htmlFor="setup-address">Caddy 访问 IP</label><HelpTooltip label="DNS 记录说明">通配符覆盖 {domain||'基础域名'} 下的一层子域，不包含根域名；已有精确记录请核对。{automatic?'预览不修改 DNS，确认配置时立即执行变更。':'请自行在 Cloudflare 保存仅 DNS（灰云）记录。'}</HelpTooltip></div>
+ return <section className="setup-dns-guidance" aria-label={`${dnsProviderName(provider)} DNS 配置指引`}>
+  <div className="field-heading"><label htmlFor="setup-address">Caddy 访问 IP</label><HelpTooltip label="DNS 记录说明">通配符覆盖 {domain||'基础域名'} 下的一层子域，不包含根域名；已有精确记录请核对。{automatic?'预览不修改 DNS，确认配置时立即执行变更。':'请自行在 DNS 服务商保存记录。'}</HelpTooltip></div>
   <input id="setup-address" placeholder="例如：192.168.2.6" value={address} onChange={event=>{onAddressChange(event.target.value);setCopyStatus('idle')}}/>
   <small className="muted">{externalCaddy?'填写外部 Caddy 的地址，不是 Manager 的地址。':'请填写访问设备能到达的 Caddy 地址。'}</small>
   {address.trim()&&!record&&<p className="text-danger">请填写可供其他设备访问的 IPv4 或 IPv6 地址，不含协议或端口。</p>}
   <details className="dns-record" open={!automatic}>
    <summary>DNS 记录详情</summary>
-   <dl><div><dt>记录</dt><dd><span>{record?.type??'A / AAAA'}</span> <code>{domain?name:'*.基础域名'}</code></dd></div><div><dt>目标</dt><dd><code>{record?.address??'待填写 IP'}</code></dd></div><div><dt>代理</dt><dd>仅 DNS（灰云）</dd></div></dl>
+   <dl><div><dt>记录</dt><dd><span>{record?.type??'A / AAAA'}</span> <code>{domain?name:'*.基础域名'}</code></dd></div><div><dt>目标</dt><dd><code>{record?.address??'待填写 IP'}</code></dd></div>{provider==='cloudflare'&&<div><dt>代理</dt><dd>仅 DNS（灰云）</dd></div>}</dl>
    <button type="button" className="button button-ghost button-sm" disabled={!record||!domain} onClick={()=>void copy()}>复制 DNS 记录</button>
   </details>
   {copyStatus==='copied'&&<p className="muted" role="status">DNS 记录已复制</p>}

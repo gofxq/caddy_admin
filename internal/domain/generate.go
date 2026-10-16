@@ -19,6 +19,7 @@ const (
 )
 
 type CaddyConfig struct {
+	DNSProvider               DNSProvider
 	MetricsEnabled            bool
 	AccessLogsEnabled         bool
 	AlertsEnabled             bool
@@ -146,9 +147,12 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 	}
 	sort.Strings(subjects)
 	issuer := object{"module": "acme", "challenges": object{"dns": object{"provider": object{"name": "cloudflare", "api_token": "{env.CLOUDFLARE_API_TOKEN}"}, "resolvers": config.Resolvers}}}
+	if config.CertificateMode == CertificateModeDNSPod {
+		issuer = object{"module": "acme", "challenges": object{"dns": object{"provider": object{"name": "dnspod", "api_token": "{env.DNSPOD_TOKEN}"}, "resolvers": config.Resolvers}}}
+	}
 	if config.TestTLS || config.CertificateMode == CertificateModeBootstrapInternal {
 		issuer = object{"module": "internal"}
-	} else if config.CertificateMode != "" && config.CertificateMode != CertificateModeCloudflare {
+	} else if config.CertificateMode != "" && !IsPublicCertificateMode(config.CertificateMode) {
 		return nil, Invalid("无效证书策略")
 	}
 	httpPort, err := strconv.Atoi(config.HTTPPort)
@@ -173,7 +177,7 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		}}}, "terminal": true}
 		routes = append(routes[:len(routes)-1], setupRoute, routes[len(routes)-1])
 	}
-	if config.CertificateMode == CertificateModeCloudflare && config.TemporaryAdminCertificate && !config.TestTLS && config.AdminURL == "" {
+	if IsPublicCertificateMode(config.CertificateMode) && config.TemporaryAdminCertificate && !config.TestTLS && config.AdminURL == "" {
 		files, _ := certificates["load_files"].([]any)
 		certificates["load_files"] = append(files, temporaryAdminCertificateLoader(config)...)
 	}

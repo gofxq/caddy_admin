@@ -1,5 +1,7 @@
 services: # 隔离测试：make up 构建启动；make status 查询 HTTPS 端口。
   caddy:
+    env_file:
+      - .env
     image: caddy-admin:local # 本地镜像使用独立标签，不覆盖 GHCR 发布镜像。
     pull_policy: build # 每次启动从本地源码构建，不拉取同名远端镜像。
     build:

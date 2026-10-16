@@ -117,7 +117,7 @@ func (api *API) Handler() http.Handler {
 	management.POST("/settings/console/complete", api.completeConsoleTransition)
 	management.POST("/settings/dns/preview", api.previewDomainDNS)
 	management.POST("/settings/dns/confirm", api.confirmDomainDNS)
-	management.POST("/settings/cloudflare", api.activateCloudflare)
+	management.POST("/settings/dns", api.activateCloudflare)
 	management.GET("/certificates", api.certificateList)
 	return router
 }

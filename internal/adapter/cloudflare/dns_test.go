@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/gofxq/caddy_admin/internal/application"
+	"github.com/gofxq/caddy_admin/internal/domain"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -238,6 +239,67 @@ func TestDNSPreviewSupportsPublicDeploymentAddresses(t *testing.T) {
 			}
 			if err := d.Apply(context.Background(), testToken, plan); err != nil || writes != 1 {
 				t.Fatalf("public DNS update: writes=%d err=%v", writes, err)
+			}
+		})
+	}
+}
+
+func TestDNSPreviewBindsCredentialsAndRejectsCrossTokenApply(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "create", true: "reuse"}[existing], func(t *testing.T) {
+			records, admin := []record{}, []record{}
+			if existing {
+				records = []record{{ID: "record", Type: "A", Name: "*.h.example.com", Content: "192.168.1.6"}}
+			}
+			writes := 0
+			d := fixture(t, &records, &admin, &writes, false)
+			base := d.client.Transport
+			otherToken := strings.Repeat("b", 40)
+			d.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+				auth := r.Header.Get("Authorization")
+				if auth != "Bearer "+testToken && auth != "Bearer "+otherToken {
+					t.Fatal("unexpected credentials")
+				}
+				clone := r.Clone(r.Context())
+				clone.Header = r.Header.Clone()
+				clone.Header.Set("Authorization", "Bearer "+testToken)
+				return base.RoundTrip(clone)
+			})
+			first, err := d.Preview(context.Background(), testToken, "h.example.com", "192.168.1.6")
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := d.Preview(context.Background(), otherToken, "h.example.com", "192.168.1.6")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.Provider != "cloudflare" || first.Fingerprint == second.Fingerprint || first.ContextFingerprint == second.ContextFingerprint {
+				t.Fatal("preview not bound to credentials/provider")
+			}
+			raw, _ := json.Marshal(second)
+			if strings.Contains(string(raw), otherToken) {
+				t.Fatal("credential leaked")
+			}
+			if err = d.Apply(context.Background(), otherToken, first); err == nil || writes != 0 {
+				t.Fatal("cross-token apply accepted", err, writes)
+			}
+		})
+	}
+}
+func TestDNSApplyRequiresMatchingProvider(t *testing.T) {
+	records, admin := []record{}, []record{}
+	writes := 0
+	d := fixture(t, &records, &admin, &writes, false)
+	p, err := d.Preview(context.Background(), testToken, "h.example.com", "192.168.1.6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []domain.DNSProvider{"dnspod", "", "unknown"} {
+		t.Run(string(provider), func(t *testing.T) {
+			changed := p
+			changed.Provider = provider
+			if err := d.Apply(context.Background(), testToken, changed); err == nil || writes != 0 {
+				t.Fatal("accepted wrong provider", provider, err, writes)
 			}
 		})
 	}

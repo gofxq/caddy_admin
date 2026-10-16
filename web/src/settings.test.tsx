@@ -7,9 +7,9 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals()})
 
 it('shows bootstrap certificate state and submits the Cloudflare token once',async()=>{
  const fetch=vi.fn()
- fetch.mockResolvedValueOnce(new Response(JSON.stringify({config:{origin:'https://admin.home.example.com',domains:[{id:'home',name:'home.example.com',access:'trusted'}],console_lan_only:false,admin_domain:'admin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['9.9.9.9'],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'}}),{status:200}))
+ fetch.mockResolvedValueOnce(new Response(JSON.stringify({config:{origin:'https://admin.home.example.com',domains:[{id:'home',name:'home.example.com',access:'trusted'}],console_lan_only:false,admin_domain:'admin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['9.9.9.9'],test_tls:false},manager_version:'test',caddy_version:'test',dns_provider:'cloudflare',dns_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'}}),{status:200}))
  fetch.mockResolvedValueOnce(new Response(JSON.stringify({certificate_status:{mode:'cloudflare',activation_status:'applying',public_status:'pending',last_error_class:'',updated_at:'now'},restart_required:true}),{status:202}))
- fetch.mockResolvedValueOnce(new Response(JSON.stringify({config:{origin:'https://admin.home.example.com',domains:[{id:'home',name:'home.example.com',access:'trusted'}],console_lan_only:false,admin_domain:'admin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['9.9.9.9'],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:true,certificate_status:{mode:'cloudflare',activation_status:'applying',public_status:'pending',last_error_class:'',updated_at:'now'}}),{status:200}))
+ fetch.mockResolvedValueOnce(new Response(JSON.stringify({config:{origin:'https://admin.home.example.com',domains:[{id:'home',name:'home.example.com',access:'trusted'}],console_lan_only:false,admin_domain:'admin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['9.9.9.9'],test_tls:false},manager_version:'test',caddy_version:'test',dns_provider:'cloudflare',dns_module:true,token_configured:true,certificate_status:{mode:'cloudflare',activation_status:'applying',public_status:'pending',last_error_class:'',updated_at:'now'}}),{status:200}))
  vi.stubGlobal('fetch',fetch)
  const qc=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})
  render(<QueryClientProvider client={qc}><Settings/></QueryClientProvider>)
@@ -17,13 +17,13 @@ it('shows bootstrap certificate state and submits the Cloudflare token once',asy
  fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
  fireEvent.click(screen.getByRole('button',{name:'保存并启用'}))
  await waitFor(()=>expect(fetch).toHaveBeenCalledTimes(3))
- expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({token:'secret-token',enable:true})
+ expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({token:'secret-token',confirmed:true})
  expect(await screen.findByText(/服务正在安全重启/)).toBeInTheDocument()
  expect(await screen.findByText(/临时证书保持管理入口可访问/)).toBeInTheDocument()
 })
 
 it('shows pending domain access without forcing console source restrictions',async()=>{
- vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({config:{origin:'https://caddyadmin.home.example.com',domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'}}),{status:200})))
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({config:{origin:'https://caddyadmin.home.example.com',domains:[{id:'home',name:'home.example.com',access:null}],console_lan_only:false,admin_domain:'caddyadmin.home.example.com',lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:[],test_tls:false},manager_version:'test',caddy_version:'test',dns_provider:'cloudflare',dns_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:'now'}}),{status:200})))
  const qc=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})
  render(<QueryClientProvider client={qc}><Settings/></QueryClientProvider>)
  expect(await screen.findByLabelText('仅允许 LAN/VPN 访问控制台')).not.toBeChecked();expect(screen.getByRole('option',{name:'待配置'})).toBeInTheDocument()
@@ -102,4 +102,20 @@ it.each(['0.0.0.0/0','::/0'])('explains that trusted range %s must be narrowed b
  fireEvent.change(screen.getByLabelText('可信网络 CIDR'),{target:{value:'10.0.0.0/8'}})
  expect(screen.queryByText(/当前可信网段包含全网段/)).not.toBeInTheDocument()
  expect(screen.getByText(/全部合法服务名/)).toBeInTheDocument()
+})
+
+it('uses the persisted DNSPod provider for certificate activation and retains token after failure',async()=>{
+ const fetch=vi.fn().mockImplementation(async(_path:string,options?:RequestInit)=>options?.method==='POST'?new Response(JSON.stringify({error:{code:'unavailable',message:'DNS 服务暂不可达，请重试'}}),{status:503}):new Response(JSON.stringify({revision:1,dns_provider:'dnspod',dns_module:true,token_configured:false,external_caddy:false,config:{origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[],console_lan_only:false,lan_cidrs:[],upstream_cidrs:[],allowed_names:[],denied_ips:[],resolvers:['1.1.1.1'],test_tls:false},certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown'}})))
+ vi.stubGlobal('fetch',fetch)
+ render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><Settings/></QueryClientProvider>)
+ const token=await screen.findByLabelText('DNSPod API Token')
+ expect(screen.getByText('DNSPod DNS 模块')).toBeInTheDocument()
+ fireEvent.change(token,{target:{value:'123,private-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'保存并启用'}))
+ await screen.findByText('DNS 服务暂不可达，请重试')
+ expect(token).toHaveValue('123,private-token')
+ expect(document.body.textContent).not.toContain('private-token')
+ const request=fetch.mock.calls.find(([,options])=>options?.method==='POST')!
+ expect(request[0]).toBe('/api/v1/settings/dns')
+ expect(JSON.parse(request[1]!.body as string)).toEqual({token:'123,private-token',confirmed:true})
 })

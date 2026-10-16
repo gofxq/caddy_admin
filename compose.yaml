@@ -11,6 +11,8 @@ services: # 内置模式：docker compose up -d，然后打开 http://服务器I
       start_period: 20s
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-} # 可选：仅首次初始化使用；手动 Setup 确认使用；完整预配置可自动初始化，不回显。
+      DNS_PROVIDER: ${DNS_PROVIDER:-cloudflare} # 可选：首次初始化默认 cloudflare，也可选 dnspod；初始化后使用已保存的提供商。
+      DNSPOD_TOKEN: ${DNSPOD_TOKEN:-} # 可选：DNSPod 的 ID,Token，非腾讯云 SecretId/SecretKey。
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-} # 可选：首次初始化后自动保存，初始化后运行文件优先。
       SETUP_DOMAIN: ${SETUP_DOMAIN:-} # 可选：首个基础域名，例如 example.com 或 *.example.com。
       SETUP_CADDY_IP: ${SETUP_CADDY_IP:-} # 自动初始化必填：客户端实际访问 Caddy 的 IPv4/IPv6；不推断，不接受 0.0.0.0 或 ::。

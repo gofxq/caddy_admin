@@ -13,7 +13,7 @@ check:
 	cd deploy/caddy && go mod verify
 integration:
 	cd deploy/caddy && go build -o ../../bin/caddy .
-	CADDY_INTEGRATION_BINARY=$(CURDIR)/bin/caddy go test -v ./internal/adapter/caddy -run 'Test(CaddyIntegration|CloudflareValidation)' -count=1
+	CADDY_INTEGRATION_BINARY=$(CURDIR)/bin/caddy go test -v ./internal/adapter/caddy -run 'Test(CaddyIntegration|CloudflareValidation|DNSPodValidation)' -count=1
 dev:
 	cd web && corepack pnpm dev
 web:
@@ -28,6 +28,7 @@ container-test:
 	python3 test/container_smoke.py
 	CGO_ENABLED=0 go build -o bin/setup-fixture ./test/setup-fixture
 	python3 test/environment_setup.py
+	python3 test/environment_setup.py dnspod
 	
 up:
 	docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml up -d --build

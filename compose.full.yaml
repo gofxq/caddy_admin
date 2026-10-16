@@ -13,17 +13,20 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
       # retries: 3 # 可选：连续失败次数，默认 3 次。
     environment: # 凭据可直接填写，或通过环境/.env 注入；含字面 $ 时写 $$。
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-} # 可选：仅首次初始化，重建容器不重置已有密码。
+      DNS_PROVIDER: ${DNS_PROVIDER:-cloudflare} # 首次初始化默认 Cloudflare，可选 dnspod；已有实例使用保存值。
+      DNSPOD_TOKEN: ${DNSPOD_TOKEN:-} # DNSPod ID,Token；不是腾讯云 SecretId/SecretKey。
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-} # 可选：手动 Setup 确认或自动初始化使用，初始化后以持久化 Token 为准。
       SETUP_DOMAIN: ${SETUP_DOMAIN:-} # 可选：首个基础域名，支持 *.example.com；仅用于首次初始化。
       SETUP_CADDY_IP: ${SETUP_CADDY_IP:-} # 自动初始化必填：明确提供实际入口 IPv4/IPv6；允许私网，不能使用未指定/回环/链路本地/组播地址。
       SETUP_ADMIN_USERNAME: ${SETUP_ADMIN_USERNAME:-admin} # 可选：首次用户名，1–64 字节。
       SETUP_RESOLVERS: ${SETUP_RESOLVERS:-1.1.1.1} # 可选：逗号分隔的服务器 DNS IP 或 IP:端口，不改变系统上游解析器。
       # CLOUDFLARE_API_TOKEN_FILE: ${CLOUDFLARE_API_TOKEN_FILE:-} # 可选：仅自定义位置时配置；默认 DATA_DIR/secrets/cloudflare_token，Token 通过初始化向导或设置页提交。
+      # DNSPOD_TOKEN_FILE: ${DNSPOD_TOKEN_FILE:-} # 可选：默认 DATA_DIR/secrets/dnspod_token。
       # DATA_DIR: ${DATA_DIR:-/var/lib/manager} # 可选：SQLite、锁和 secret 目录，Token 默认路径随此目录变化；改动须同步挂载，入口脚本只准备默认目录权限。
       # SNAPSHOT_DIR: ${SNAPSHOT_DIR:-/srv/snapshots} # 可选：启动快照目录；改动须同步挂载并保证 10001:10001 可写，不能手工修改 active.json。
       # CADDY_STORAGE: ${CADDY_STORAGE:-/data/caddy} # 可选：内置 Caddy 证书与 ACME 目录；须位于持久挂载内，外部实例保留远端实际 storage。
       # CADDY_SOCKET: ${CADDY_SOCKET:-/run/caddy/admin.sock} # 可选：内置 Caddy 私有 Admin Socket；目录须可写，外部模式不使用此 Socket。
-      # CADDY_BINARY: ${CADDY_BINARY:-/usr/bin/caddy} # 可选：实际 Caddy 可执行文件，用于运行及真实校验；须保留 Cloudflare DNS 模块。
+      # CADDY_BINARY: ${CADDY_BINARY:-/usr/bin/caddy} # 可选：实际 Caddy 可执行文件，用于运行及真实校验；须保留 Cloudflare 和 DNSPod DNS 模块。
       # STATIC_ROOT: ${STATIC_ROOT:-/srv/web} # 可选：前端静态资源目录；自定义目录须包含构建后的前端文件。
       # LISTEN: ${LISTEN:-127.0.0.1:8080} # 可选：内置 Manager 默认仅容器回环；外部模式默认 :8080，需覆盖时使用该值并同步映射。
       # MANAGER_DIAL: ${MANAGER_DIAL:-127.0.0.1:8080} # 可选（内置）：Caddy 反代 Manager 的目标；外部模式必填外部 Caddy 可达的 host:port。
@@ -32,7 +35,7 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
       # HTTPS_PORT: ${HTTPS_PORT:-443} # 可选：内置 Caddy 容器内 HTTPS 端口；须同步端口映射与 TLS 探测地址，通常只修改宿主 HTTPS_BIND。
       # CADDY_ADMIN_URL: ${CADDY_ADMIN_URL:-} # 可选（仅外部）：启用 Manager-only 模式，HTTP(S) Origin 必须含端口且无路径/凭据；同时配置 MANAGER_DIAL 并替换端口映射。
       # SETUP_LISTEN: ${SETUP_LISTEN:-:8082} # 可选（仅外部）：HTTPS 初始化/交接监听；改动须同步外部端口映射的容器目标端口。
-      # TEST_TLS: ${TEST_TLS:-false} # 可选（仅隔离测试）：true 使用内部测试 CA；不代表公网可信，内置模式仍禁止 Cloudflare 激活及校验/发布。
+      # TEST_TLS: ${TEST_TLS:-false} # 可选（仅隔离测试）：true 使用内部测试 CA；不代表公网可信，内置模式仍禁止正式 DNS-01 激活及校验/发布。
     ports: # 必需：默认 80/443；HTTP_BIND/HTTPS_BIND 是宿主绑定参数，不是容器环境变量，宿主防火墙决定实际可达范围。
       - '${HTTP_BIND:-0.0.0.0:80}:80' # 初始化前允许HTTP Setup（手动凭据会明文传输），完成后跳转 HTTPS。
       - '${HTTPS_BIND:-0.0.0.0:443}:443' # HTTPS 初始化、控制台和业务入口；非标准宿主端口须显式访问，默认 HTTP 跳转仍指向 443。

@@ -21,6 +21,7 @@ import (
 
 	caddyadapter "github.com/gofxq/caddy_admin/internal/adapter/caddy"
 	"github.com/gofxq/caddy_admin/internal/adapter/cloudflare"
+	"github.com/gofxq/caddy_admin/internal/adapter/dnspod"
 	"github.com/gofxq/caddy_admin/internal/adapter/gormstore"
 	"github.com/gofxq/caddy_admin/internal/adapter/httpapi"
 	observationstore "github.com/gofxq/caddy_admin/internal/adapter/observability"
@@ -56,7 +57,7 @@ func run() error {
 		return err
 	}
 	if command == "check-secret" {
-		return domain.ValidateCloudflareToken(os.Getenv("CLOUDFLARE_API_TOKEN"))
+		return checkRuntimeSecrets(c)
 	}
 	if command == "run" {
 		return runContainer(c)
@@ -115,8 +116,11 @@ func run() error {
 			return ce
 		}
 		c.CertificateMode = certificate.Mode
-		if c.AdminURL == "" && certificate.Mode == domain.CertificateModeCloudflare {
-			if e = loadCloudflareSecret(); e != nil {
+		if domain.IsPublicCertificateMode(certificate.Mode) {
+			c.DNSProvider = domain.DNSProvider(certificate.Mode)
+		}
+		if c.AdminURL == "" && !c.TestTLS && domain.IsPublicCertificateMode(certificate.Mode) {
+			if e = loadDNSSecret(c.DataDir, c.DNSProvider); e != nil {
 				return e
 			}
 		}
@@ -270,21 +274,22 @@ func knownManagerCommand(command string) bool {
 func composeApplication(c config.Config, store *gormstore.Store) *application.Service {
 	secretPath := config.CloudflareTokenPath(c.DataDir)
 	options := application.Options{
+		DNSProvider: c.DNSProvider, SetupTokens: map[domain.DNSProvider]string{domain.DNSProviderCloudflare: os.Getenv("CLOUDFLARE_API_TOKEN"), domain.DNSProviderDNSPod: os.Getenv("DNSPOD_TOKEN")},
 		DataDir: c.DataDir, SnapshotDir: c.SnapshotDir, AdminURL: c.AdminURL,
 		ManagerDial: c.ManagerDial, ProbeAddress: c.ProbeAddress, CaddyStorage: c.CaddyStorage,
-		StaticRoot: c.StaticRoot, Socket: c.Socket, SetupPassword: os.Getenv("ADMIN_PASSWORD"), SetupToken: os.Getenv("CLOUDFLARE_API_TOKEN"), CaddyBinary: c.CaddyBinary,
+		StaticRoot: c.StaticRoot, Socket: c.Socket, SetupPassword: os.Getenv("ADMIN_PASSWORD"), CaddyBinary: c.CaddyBinary,
 		SetupDefaults: application.SetupDefaults{Domain: c.SetupDomain, Username: c.SetupUsername, Address: c.SetupAddress, Resolvers: c.SetupResolvers},
 		HTTPPort:      c.HTTPPort, HTTPSPort: c.HTTPSPort, TestTLS: c.TestTLS,
 		CertificateMode: c.CertificateMode, RuntimePolicy: c.ManagedSettings(),
 	}
 	client := caddyadapter.NewClient(caddyadapter.Options{AdminURL: c.AdminURL, Socket: c.Socket, CaddyBinary: c.CaddyBinary, DataDir: c.DataDir})
 	return application.New(options, store, client, application.Dependencies{
-		UpstreamProbe: &caddyadapter.TCPUpstreamProbe{},
-		SetupDNS:      cloudflare.New(), SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
+		UpstreamProbe:     &caddyadapter.TCPUpstreamProbe{},
+		SetupDNSProviders: map[domain.DNSProvider]application.SetupDNS{domain.DNSProviderCloudflare: cloudflare.New(), domain.DNSProviderDNSPod: dnspod.New()}, SetupIntent: &caddyadapter.SetupIntentFile{Path: filepath.Join(c.DataDir, "secrets", "setup_dns_intent.json")},
 		SetupDoH: &caddyadapter.DoHProbe{},
 		Resolver: net.DefaultResolver, Certificates: &caddyadapter.Probe{},
 		Snapshot: &caddyadapter.Snapshot{Path: c.ActivePath()},
-		Secrets:  &caddyadapter.SecretFile{Path: secretPath}, BootstrapCertificate: &caddyadapter.BootstrapTLS{},
+		Secrets:  &caddyadapter.SecretFile{Path: secretPath, DNSPodPath: config.DNSTokenPath(c.DataDir, domain.DNSProviderDNSPod)}, BootstrapCertificate: &caddyadapter.BootstrapTLS{},
 		SetupProbe: &caddyadapter.SetupProbe{}, ResolverSuggestions: func() []string { return caddyadapter.ResolverSuggestions("/etc/resolv.conf") },
 	})
 }
@@ -399,6 +404,7 @@ func setupAccessHandler(next http.Handler) http.Handler {
 }
 
 func serveSetup(c config.Config, store *gormstore.Store) error {
+	c.CertificateMode = domain.CertificateModeBootstrapInternal
 	certPath := filepath.Join(c.DataDir, "secrets", "setup_tls.crt")
 	keyPath := filepath.Join(c.DataDir, "secrets", "setup_tls.key")
 	if err := caddyadapter.EnsureBootstrapCertificate(certPath, keyPath, "https://127.0.0.1"); err != nil {
@@ -531,4 +537,60 @@ func loadCloudflareSecret() error {
 		return fmt.Errorf("cannot read Cloudflare secret")
 	}
 	return os.Setenv("CLOUDFLARE_API_TOKEN", strings.TrimSpace(string(b)))
+}
+
+// Initialized instances load their saved provider's credential, never ENV fallback.
+func loadDNSSecret(dataDir string, provider domain.DNSProvider) error {
+	secret := &caddyadapter.SecretFile{Path: config.CloudflareTokenPath(dataDir), DNSPodPath: config.DNSTokenPath(dataDir, domain.DNSProviderDNSPod)}
+	token, err := secret.ReadDNSToken(provider)
+	if err != nil {
+		return err
+	}
+	return os.Setenv(config.DNSTokenEnvironment(provider), token)
+}
+
+// Direct Caddy maintenance commands use the provider in the saved startup
+// snapshot. A changed first-use DNS_PROVIDER must not select a different secret.
+func checkRuntimeSecrets(c config.Config) error {
+	raw, err := os.ReadFile(c.ActivePath())
+	if os.IsNotExist(err) {
+		return domain.ValidateDNSToken(c.DNSProvider, os.Getenv(config.DNSTokenEnvironment(c.DNSProvider)))
+	}
+	if err != nil {
+		return fmt.Errorf("cannot read startup snapshot for credential check")
+	}
+	var snapshot struct {
+		Apps struct {
+			TLS struct {
+				Automation struct {
+					Policies []struct {
+						Issuers []struct {
+							Challenges struct {
+								DNS struct {
+									Provider struct {
+										Name domain.DNSProvider `json:"name"`
+									} `json:"provider"`
+								} `json:"dns"`
+							} `json:"challenges"`
+						} `json:"issuers"`
+					} `json:"policies"`
+				} `json:"automation"`
+			} `json:"tls"`
+		} `json:"apps"`
+	}
+	if json.Unmarshal(raw, &snapshot) != nil {
+		return fmt.Errorf("invalid startup snapshot")
+	}
+	for _, policy := range snapshot.Apps.TLS.Automation.Policies {
+		for _, issuer := range policy.Issuers {
+			provider := issuer.Challenges.DNS.Provider.Name
+			if provider == "" {
+				continue
+			}
+			if err := domain.ValidateDNSToken(provider, os.Getenv(config.DNSTokenEnvironment(provider))); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

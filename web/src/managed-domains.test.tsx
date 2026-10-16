@@ -4,7 +4,7 @@ import {Setup} from './pages/Setup'
 import {parseConfiguration} from './configuration'
 afterEach(()=>{cleanup();vi.unstubAllGlobals()})
 it('uses three setup steps and confirms configured credentials without password inputs',async()=>{
- vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({initialized:false,external_caddy:false,test_tls:false,setup_id:'process',admin_password_status:'ready',cloudflare_token_status:'ready'}))))
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({initialized:false,external_caddy:false,test_tls:false,setup_id:'process',admin_password_status:'ready',dns_token_status:'ready'}))))
  render(<Setup pollLogin={false}/> )
  expect(await screen.findByText('管理员密码已通过部署配置')).toBeInTheDocument()
  expect(screen.getByRole('list',{name:'初始化步骤'}).children).toHaveLength(3)
@@ -22,7 +22,7 @@ it('accepts format two domain references and rejects old format',()=>{
  expect(()=>parseConfiguration(JSON.stringify({...config,version:1}))).toThrow(/版本/)
 })
 it.each(['missing','ready','invalid'])('never echoes deployment password for status %s',async status=>{
- vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({initialized:false,test_tls:true,admin_password_status:status,cloudflare_token_status:'invalid',admin_password_error:'部署密码格式有误',setup_id:'p'}))))
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({initialized:false,test_tls:true,admin_password_status:status,dns_token_status:'invalid',admin_password_error:'部署密码格式有误',setup_id:'p'}))))
  render(<Setup pollLogin={false}/>)
  await screen.findByRole('heading',{name:'初始化 Caddy Admin'})
  if(status==='missing')expect(screen.getByLabelText('管理员密码')).toHaveValue('')
@@ -35,7 +35,7 @@ it('submits only configured password consent and setup identity in isolated mode
  fireEvent.click(await screen.findByLabelText('我确认使用已配置的管理员密码'));fireEvent.click(screen.getByRole('button',{name:'下一步'}));fireEvent.change(screen.getByLabelText('首个通配符域名'),{target:{value:'*.Example.com'}});fireEvent.click(screen.getByRole('button',{name:'下一步'}));await screen.findByRole('heading',{name:'确认配置'});fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByRole('heading',{name:'初始化已完成'})
  const body=JSON.parse(fetch.mock.calls.find(c=>c[0].endsWith('/complete'))![1].body)
  expect(body).toMatchObject({use_configured_password:true,setup_id:'process',settings:{domain:'example.com',resolvers:['1.1.1.1']}})
- expect(body).not.toHaveProperty('password');expect(body).not.toHaveProperty('cloudflare')
+ expect(body).not.toHaveProperty('password');expect(body).not.toHaveProperty('dns')
 })
 it('refreshes stale configured credential confirmation while retaining the domain',async()=>{
  let statusCalls=0

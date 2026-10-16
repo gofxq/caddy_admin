@@ -172,7 +172,7 @@ function config(services: Service[]) {
 
 type Validation = {id:string;revision:number;hash:string;runtimeHash:string;rollbackId:string;expires:number};
 export type DemoState = {
-  version:1;initialized:boolean;username:string;authenticated:boolean;tokenConfigured:boolean;
+  version:1;initialized:boolean;username:string;authenticated:boolean;tokenConfigured:boolean;dnsProvider?:'cloudflare'|'dnspod';
   portableSettings:ManagedSettings;activeSettings:ManagedSettings;revision:number;
   published:Service[];draft:Service[];revisions:[number,Service[]][];
   deployments:Deployment[];audits:Audit[];validation:Validation|null;
@@ -181,10 +181,11 @@ export type DemoState = {
 export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?:DemoState} = {}) {
   const staticDemo=options.staticDemo===true;
   let initialized=!options.setup,username="admin",tokenConfigured=false;
+  let dnsProvider:'cloudflare'|'dnspod'='cloudflare';
   const setupDNSRecords=new Map<string,string>([['home.example.com','192.168.1.5'],['change.example.com','192.168.1.5']]);
-  const setupDNSPlan=(domain:string,address:string)=>{
+  const setupDNSPlan=(domain:string,address:string,provider='cloudflare',token='')=>{
     const previous=setupDNSRecords.get(domain);
-    return {name:`*.${domain}`,type:address.includes(':')?'AAAA':'A',address,action:previous===address?'reuse':previous?'update':'create',...(previous?{old_address:previous,old_proxied:false}:{}),fingerprint:hash([domain,address,previous])};
+    return {provider,name:`*.${domain}`,type:address.includes(':')?'AAAA':'A',address,action:previous===address?'reuse':previous?'update':'create',...(previous?{old_address:previous,old_proxied:false}:{}),fingerprint:hash([provider,token,domain,address,previous])};
   };
   let portableSettings: ManagedSettings={origin:"https://caddyadmin.home.example.com",domains:[{id:"home",name:"home.example.com",access:"trusted"}],console_lan_only:false,admin_domain:"caddyadmin.home.example.com",lan_cidrs:["10.0.0.0/8"],upstream_cidrs:["10.0.0.0/8"],allowed_names:[],denied_ips:["10.0.0.2"],resolvers:["10.77.0.1"]};
   portableSettings={...portableSettings,metrics_enabled:false,access_logs_enabled:false,alerts_enabled:false,upstream_checks_enabled:false};
@@ -280,12 +281,12 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
   if(options.state){
     const state=clone(options.state);
     if(state.version!==1||!Array.isArray(state.draft)||!Array.isArray(state.deployments)||!Array.isArray(state.portableSettings?.domains))throw new Error("无效的演示数据");
-    initialized=state.initialized;username=state.username;authenticated=state.authenticated;tokenConfigured=state.tokenConfigured;
+    initialized=state.initialized;username=state.username;authenticated=state.authenticated;tokenConfigured=state.tokenConfigured;dnsProvider=state.dnsProvider??'cloudflare';
     portableSettings=state.portableSettings;activeSettings=state.activeSettings;revision=state.revision;published=state.published;draft=state.draft;validation=state.validation;
     revisions.clear();for(const [key,value] of state.revisions)revisions.set(key,value);
     deployments.splice(0,deployments.length,...state.deployments);audits.splice(0,audits.length,...state.audits);
   }
-  const certificateStatus=():CertificateStatus=>({mode:tokenConfigured?'cloudflare':'bootstrap_internal',activation_status:tokenConfigured?'success':'idle',public_status:tokenConfigured?'ready':'unknown',last_error_class:'',updated_at:now()});
+  const certificateStatus=():CertificateStatus=>({mode:tokenConfigured?dnsProvider:'bootstrap_internal',activation_status:tokenConfigured?'success':'idle',public_status:tokenConfigured?'ready':'unknown',last_error_class:'',updated_at:now()});
   const record = (
     action: string,
     object: string,
@@ -348,29 +349,29 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       const settings=input.settings as {domain?:string;resolvers?:string[]}|undefined;
       const domain=settings?.domain??'home.example.com';
       if(method==='GET'&&path==='/setup/progress')return ok({status:'manual',stage:'configuration'});
-      if(method==='GET'&&path==='/setup/status')return ok({initialized,automatic:{status:'manual',stage:'configuration'},external_caddy:false,test_tls:false,resolver_suggestions:['1.1.1.1'],admin_password_status:'missing',cloudflare_token_status:'missing',setup_id:'static-demo'});
+      if(method==='GET'&&path==='/setup/status')return ok({initialized,automatic:{status:'manual',stage:'configuration'},external_caddy:false,test_tls:false,resolver_suggestions:['1.1.1.1'],admin_password_status:'missing',dns_provider:'cloudflare',dns_token_status:'missing',dns_credentials:{cloudflare:{status:'missing'},dnspod:{status:'missing'}},setup_id:'static-demo'});
       if(method==='GET'&&path==='/setup/handoff')return ok({initialized,mode:'embedded',admin_origin:portableSettings.origin,manager_status:'ready',dns_status:'ready',console_status:'ready',temporary_entry:false,checked_at:now()});
       if(method==='POST'&&path==='/setup/recheck')return fail(409,'conflict','演示流程未运行自动初始化，请在向导检查 DNS');
       if(method==='POST'&&path==='/setup/preflight')return ok({normalized:{admin_domain:`caddyadmin.${domain}`,origin:`https://caddyadmin.${domain}`,admin_origin:`https://caddyadmin.${domain}`},network_valid:true,checks:[{id:'demo',status:'pass',message:'演示预检通过，未进行真实网络检查'}],can_complete:true,requires_acknowledgement:false,warning_fingerprint:''});
-      if(method==='POST'&&path==='/setup/dns/preview')return ok(setupDNSPlan(String(input.domain),String(input.address)));
+      if(method==='POST'&&path==='/setup/dns/preview')return ok(setupDNSPlan(String(input.domain),String(input.address),String(input.provider??'cloudflare'),String(input.token??'')));
       if(method==='POST'&&path==='/setup/dns/confirm'){
-        const cf=input.cloudflare as {address?:string;fingerprint?:string;confirmed?:boolean}|undefined;
+        const cf=input.dns as {provider?:string;token?:string;address?:string;fingerprint?:string;confirmed?:boolean}|undefined;
         if(!cf?.confirmed||!cf.address)return fail(422,'invalid','请明确确认 DNS 变更');
-        const plan=setupDNSPlan(domain,cf.address);
+        const plan=setupDNSPlan(domain,cf.address,cf.provider,cf.token);
         if(cf.fingerprint!==plan.fingerprint)return fail(409,'conflict','DNS 记录已变化，请重新预览并确认');
         setupDNSRecords.set(domain,cf.address);return ok(plan);
       }
       if(method==='POST'&&path==='/setup/complete'){
         portableSettings=clone(input.import_settings as ManagedSettings??{origin:`https://caddyadmin.${domain}`,admin_domain:`caddyadmin.${domain}`,domains:[{id:'home',name:domain,access:'internet'}],console_lan_only:false,lan_cidrs:['0.0.0.0/0','::/0'],upstream_cidrs:['0.0.0.0/0','::/0'],allowed_names:['*'],denied_ips:[],resolvers:settings?.resolvers??['1.1.1.1']});
         activeSettings={...clone(portableSettings),console_lan_only:false,domains:clone(portableSettings.domains.filter(d=>portableSettings.admin_domain===`caddyadmin.${d.name}`))};draft=((input.services??[]) as Service[]).map(s=>({...s,id:randomUUID(),dial:'',updated_at:now()}));published=[];revision++;revisions.set(revision,clone(draft));
-        initialized=true;authenticated=true;username=String(input.username??'admin');tokenConfigured=true;
+        dnsProvider=(input.dns_provider as 'cloudflare'|'dnspod'|undefined)??(input.dns as {provider?:'cloudflare'|'dnspod'}|undefined)?.provider??'cloudflare';initialized=true;authenticated=true;username=String(input.username??'admin');tokenConfigured=true;
         record('setup.complete','demo');return ok({admin_origin:portableSettings.origin});
       }
       return fail(404,'not_found','演示 API 不支持该请求');
     }
     if(method==="GET"&&path==="/setup/progress")return ok({status:"manual",stage:"configuration"});
     if(method==="GET"&&path==="/setup/status")return ok({initialized:true,automatic:{status:"manual",stage:"configuration"},external_caddy:false,test_tls:false,resolver_suggestions:[]});
-    if(method==="POST"&&path.startsWith("/setup/"))return fail(409,"conflict","演示实例已经初始化，不会执行 Cloudflare DNS 操作");
+    if(method==="POST"&&path.startsWith("/setup/"))return fail(409,"conflict","演示实例已经初始化，不会执行 DNS 操作");
     if (method === "GET" && path === "/auth/session")
       return authenticated
         ? ok({
@@ -551,14 +552,15 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
         config: {...portableSettings, test_tls:false},active_config:clone(activeSettings),revision,
         manager_version: "演示模式",
         caddy_version: "演示模式",
-        cloudflare_module: true,
+        dns_provider: dnsProvider,
+        dns_module: true,
         token_configured: tokenConfigured,
         certificate_status: certificateStatus(),
         external_caddy: false,
       });
-    if (method === "POST" && path === "/settings/cloudflare"){
-      if(staticDemo){tokenConfigured=true;record('settings.cloudflare','demo');return ok({certificate_status:certificateStatus(),restart_required:false});}
-      return {status:202,body:{certificate_status:{mode:'cloudflare',activation_status:'applying',public_status:'pending',last_error_class:'',updated_at:now()},restart_required:false}};
+    if (method === "POST" && path === "/settings/dns"){
+      if(staticDemo){tokenConfigured=true;record('settings.dns','demo');return ok({certificate_status:certificateStatus(),restart_required:false});}
+      return {status:202,body:{certificate_status:{mode:dnsProvider,activation_status:'applying',public_status:'pending',last_error_class:'',updated_at:now()},restart_required:false}};
     }
     if(staticDemo&&method==='GET'&&path==='/certificates')return ok({items:activeSettings.domains.map(domain=>({subject:`*.${domain.name}`,status:'valid',message:'演示证书状态，未进行真实 TLS 探测。',sans:[`*.${domain.name}`],not_before:day(-20),not_after:day(70),days:70,checked_at:now()})),offset:0,limit:20});
     if (method === "GET" && path === "/certificates")
@@ -690,6 +692,6 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
     return fail(404, "not_found", "演示 API 不支持该请求");
   }
 
-  const getState=():DemoState=>clone({version:1,initialized,username,authenticated,tokenConfigured,portableSettings,activeSettings,revision,published,draft,revisions:[...revisions],deployments,audits,validation});
+  const getState=():DemoState=>clone({version:1,initialized,username,authenticated,tokenConfigured,dnsProvider,portableSettings,activeSettings,revision,published,draft,revisions:[...revisions],deployments,audits,validation});
   return { handle, getState };
 }

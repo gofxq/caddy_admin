@@ -5,6 +5,7 @@ type CertificateMode string
 const (
 	CertificateModeBootstrapInternal CertificateMode = "bootstrap_internal"
 	CertificateModeCloudflare        CertificateMode = "cloudflare"
+	CertificateModeDNSPod            CertificateMode = "dnspod"
 )
 
 type ManagedDomain struct {

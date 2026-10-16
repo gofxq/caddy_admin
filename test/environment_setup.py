@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Real startup auto-setup with fixed HTTPS Cloudflare/DNS fixtures, no public network."""
-import ipaddress, json, os, pathlib, subprocess, time, uuid
+"""Real startup auto-setup with fixed HTTPS provider/DNS fixtures, no public network."""
+import ipaddress, json, os, pathlib, subprocess, sys, time, uuid
 image=os.environ.get('CONTAINER_TEST_IMAGE','caddy-admin:single-container-test')
 prefix='caddy-admin-auto-'+uuid.uuid4().hex[:8]
 network=prefix+'-net';containers=[];volumes=[]
-password='IsolatedAutoSetupOnly$123!';token='a'*40
+provider=sys.argv[1] if len(sys.argv)>1 else os.environ.get('TEST_DNS_PROVIDER','cloudflare')
+if provider not in ('cloudflare','dnspod'):raise ValueError('provider must be cloudflare or dnspod')
+password='IsolatedAutoSetupOnly$123!';token=('12345,'+'a'*32) if provider=='dnspod' else 'a'*40
+token_file='dnspod_token' if provider=='dnspod' else 'cloudflare_token'
+other_provider='cloudflare' if provider=='dnspod' else 'dnspod'
 
 def docker(*args,check=True):
     result=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=90)
@@ -50,15 +54,16 @@ try:
     storage=mounts('instance')
     def start(name,address,data,changed=False):
         container=prefix+'-'+name;containers.append(container)
-        values={'ADMIN_PASSWORD':'bad' if changed else password,'CLOUDFLARE_API_TOKEN':'bad' if changed else token,'SETUP_DOMAIN':'bad/domain' if changed else '*.home.example.test','SETUP_CADDY_IP':'::' if changed else address,'SETUP_ADMIN_USERNAME':'operator','SETUP_RESOLVERS':fixture_ip+':53','SSL_CERT_FILE':'/fixture/ca.crt','HTTP_PROXY':'','HTTPS_PROXY':'','ALL_PROXY':'','NO_PROXY':'*'}
+        values={'ADMIN_PASSWORD':'bad' if changed else password,'DNS_PROVIDER':other_provider if changed else provider,'CLOUDFLARE_API_TOKEN':'bad' if changed else (token if provider=='cloudflare' else ''),'DNSPOD_TOKEN':'bad' if changed else (token if provider=='dnspod' else ''),'SETUP_DOMAIN':'bad/domain' if changed else '*.home.example.test','SETUP_CADDY_IP':'::' if changed else address,'SETUP_ADMIN_USERNAME':'operator','SETUP_RESOLVERS':fixture_ip+':53','SSL_CERT_FILE':'/fixture/ca.crt','HTTP_PROXY':'','HTTPS_PROXY':'','ALL_PROXY':'','NO_PROXY':'*'}
         env=[arg for key,value in values.items() for arg in ('-e',key+'='+value)]
-        docker('run','-d','--init','--restart','unless-stopped','--name',container,'--network',network,'--ip',address,'--add-host','api.cloudflare.com:'+fixture_ip,'--add-host','cloudflare-dns.com:'+fixture_ip,'-v',cert_volume+':/fixture:ro',*data,*env,image)
+        docker('run','-d','--init','--restart','unless-stopped','--name',container,'--network',network,'--ip',address,'--add-host','api.cloudflare.com:'+fixture_ip,'--add-host','cloudflare-dns.com:'+fixture_ip,'--add-host','dnsapi.cn:'+fixture_ip,'-v',cert_volume+':/fixture:ro',*data,*env,image)
         return container
     instance=start('instance',entry,storage)
     eventually(lambda:docker('exec',instance,'manager','health',check=False).returncode==0 and request(instance,'/api/v1/setup/handoff')[1].get('initialized'))
     status,login=request(instance,'/api/v1/auth/login',{'username':'operator','password':password},True,session=True);assert status==200,'automatic administrator missing'
     status,_=request(instance,'/api/v1/services',formal=True);assert status==401,'unauthenticated API accepted'
     status,settings=request(instance,'/api/v1/settings',formal=True,session=True);assert status==200,'authenticated settings unavailable'
+    assert settings['dns_provider']==provider and settings['certificate_status']['mode']==provider and settings['token_configured'],'selected provider not saved'
     policy=settings['config']
     assert policy['domains'][0]['access']=='internet' and not policy['console_lan_only'],'default source policy was restricted'
     assert policy['lan_cidrs']==['0.0.0.0/0','::/0'] and policy['upstream_cidrs']==['0.0.0.0/0','::/0'] and policy['allowed_names']==['*'] and policy['denied_ips']==[],'default target policy was restricted'
@@ -69,8 +74,9 @@ try:
     status,public=request(instance,'/api/v1/setup/handoff');assert status==200 and public['initialized'] and public['console_status']!='ready','test certificate reported public trust'
     snapshot=docker('exec',instance,'cat','/srv/snapshots/active.json').stdout
     assert token not in snapshot and password not in snapshot,'secret leaked into startup snapshot'
+    assert any(issuer.get('challenges',{}).get('dns',{}).get('provider',{}).get('name')==provider for issuer in json.loads(snapshot)['apps']['tls']['automation']['policies'][0]['issuers']),'wrong runtime DNS module'
     assert sample['hostname'] not in snapshot,'saving the first service draft published a business route'
-    saved_token=docker('exec',instance,'cat','/var/lib/manager/secrets/cloudflare_token').stdout
+    saved_token=docker('exec',instance,'cat','/var/lib/manager/secrets/'+token_file).stdout
     assert saved_token.strip()==token,'token not persisted'
     docker('restart','-t','20',instance)
     eventually(lambda:docker('exec',instance,'manager','health',check=False).returncode==0)
@@ -78,9 +84,11 @@ try:
     docker('rm','-f',instance)
     changed=start('changed',entry,storage,True)
     eventually(lambda:docker('exec',changed,'manager','health',check=False).returncode==0)
-    assert request(changed,'/api/v1/auth/login',{'username':'operator','password':password},True)[0]==200,'changed environment reset password or prevented startup'
+    assert request(changed,'/api/v1/auth/login',{'username':'operator','password':password},True,session=True)[0]==200,'changed environment reset password or prevented startup'
     assert docker('exec',changed,'cat','/srv/snapshots/active.json').stdout==snapshot,'changed environment overwrote snapshot'
-    assert docker('exec',changed,'cat','/var/lib/manager/secrets/cloudflare_token').stdout==saved_token,'changed environment overwrote token'
+    assert docker('exec',changed,'cat','/var/lib/manager/secrets/'+token_file).stdout==saved_token,'changed environment overwrote token'
+    code,restarted_settings=request(changed,'/api/v1/settings',formal=True,session=True)
+    assert code==200 and restarted_settings['dns_provider']==provider and restarted_settings['certificate_status']['mode']==provider and restarted_settings['token_configured'],'changed environment overrode saved provider or credential'
     paused=start('paused',pause_entry,mounts('paused'))
     progress=eventually(lambda: (lambda result:result[1] if result[0]==200 and result[1]['status']=='action_required' else None)(request(paused,'/api/v1/setup/progress')))
     assert progress['stage']=='dns','wrong pause phase'
@@ -92,11 +100,12 @@ try:
         assert code==200 and result['status']=='action_required','readonly recheck failed'
     assert docker('exec',paused,'test','-f','/srv/snapshots/active.json',check=False).returncode!=0,'recheck saved initialization'
     stats=json.loads(docker('exec',fixture,'curl','--noproxy','*','-sk','https://127.0.0.1/stats').stdout)
-    assert stats['reads']>0 and stats['writes']==0,'automatic flow wrote Cloudflare DNS'
+    assert stats['reads']>0 and stats['writes']==0,'automatic flow wrote provider DNS'
+    assert (stats['dnspod_reads']>0)==(provider=='dnspod') and stats['dnspod_writes']==0,'wrong DNS provider API used'
     for name in (changed,paused):
         logs=docker('logs',name).stdout+docker('logs',name).stderr
         assert token not in logs and password not in logs,'credential leaked to logs'
-    print('PASS automatic startup: real Manager/Caddy, isolated HTTPS Cloudflare/DNS, read-only reuse, sole administrator, authenticated API, temporary certificate uncertainty, restart persistence, changed environment ignored, DNS change paused without writes',flush=True)
+    print('PASS automatic startup ('+provider+'): real Manager/Caddy, isolated HTTPS provider/DNS, read-only reuse, sole administrator, authenticated API, temporary certificate uncertainty, restart persistence, changed environment ignored, DNS change paused without writes',flush=True)
 except Exception:
     for container in containers:
         diagnostic=docker('logs','--tail','20',container,check=False)

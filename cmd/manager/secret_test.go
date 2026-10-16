@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/gofxq/caddy_admin/internal/config"
+	"github.com/gofxq/caddy_admin/internal/domain"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,5 +83,50 @@ func TestEntrypointLoadsPersistedTokenOnlyForDirectCaddy(t *testing.T) {
 				t.Fatalf("%s credential source was incorrect: %v", command, err)
 			}
 		})
+	}
+}
+
+func TestDNSPodRuntimeSecretOverridesChangedEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DNS_PROVIDER", "cloudflare")
+	t.Setenv("DNSPOD_TOKEN", "12345,stale-token")
+	t.Setenv("DNSPOD_TOKEN_FILE", "")
+	path := filepath.Join(dir, "secrets", "dnspod_token")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("12345,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadDNSSecret(dir, "dnspod"); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("DNSPOD_TOKEN") != "12345,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatal("persisted token was not loaded")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadDNSSecret(dir, "dnspod"); err == nil {
+		t.Fatal("runtime must not fall back to ENV when saved token missing")
+	}
+}
+
+func TestDirectCaddySecretCheckUsesSnapshotProvider(t *testing.T) {
+	c := config.Default()
+	c.SnapshotDir = t.TempDir()
+	c.DNSProvider = domain.DNSProviderCloudflare
+	t.Setenv("CLOUDFLARE_API_TOKEN", "")
+	t.Setenv("DNSPOD_TOKEN", "12345,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	raw := []byte(`{"apps":{"tls":{"automation":{"policies":[{"issuers":[{"module":"acme","challenges":{"dns":{"provider":{"name":"dnspod","api_token":"{env.DNSPOD_TOKEN}"}}}}]}]}}}}`)
+	if err := os.WriteFile(c.ActivePath(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRuntimeSecrets(c); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DNSPOD_TOKEN", "")
+	if err := checkRuntimeSecrets(c); err == nil {
+		t.Fatal("missing saved provider token accepted")
 	}
 }

@@ -16,11 +16,12 @@ type SetupSettings struct {
 }
 
 type SetupRequest struct {
+	DNSProvider           domain.DNSProvider      `json:"dns_provider,omitempty"`
 	UseConfiguredPassword bool                    `json:"use_configured_password,omitempty"`
 	UseConfiguredToken    bool                    `json:"use_configured_token,omitempty"`
 	SetupID               string                  `json:"setup_id,omitempty"`
 	ImportSettings        *domain.ManagedSettings `json:"import_settings,omitempty"`
-	Cloudflare            *SetupCloudflare        `json:"cloudflare,omitempty"`
+	Cloudflare            *SetupCloudflare        `json:"dns,omitempty"`
 	Services              []PortableService       `json:"services,omitempty"`
 	ConfirmImport         bool                    `json:"confirm_import,omitempty"`
 	Username              string                  `json:"username"`
@@ -51,19 +52,25 @@ type SetupNormalizedSettings struct {
 	AdminOrigin string `json:"admin_origin"`
 }
 
+type SetupCredentialStatus struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
 type SetupStatus struct {
-	Defaults              *SetupDefaults `json:"defaults,omitempty"`
-	ConfigurationError    string         `json:"configuration_error,omitempty"`
-	Automatic             SetupProgress  `json:"automatic"`
-	AdminPasswordStatus   string         `json:"admin_password_status"`
-	CloudflareTokenStatus string         `json:"cloudflare_token_status"`
-	AdminPasswordError    string         `json:"admin_password_error,omitempty"`
-	CloudflareTokenError  string         `json:"cloudflare_token_error,omitempty"`
-	SetupID               string         `json:"setup_id"`
-	TestTLS               bool           `json:"test_tls"`
-	Initialized           bool           `json:"initialized"`
-	Resolvers             []string       `json:"resolver_suggestions"`
-	ExternalCaddy         bool           `json:"external_caddy"`
+	DNSProvider           domain.DNSProvider                           `json:"dns_provider"`
+	DNSCredentials        map[domain.DNSProvider]SetupCredentialStatus `json:"dns_credentials"`
+	Defaults              *SetupDefaults                               `json:"defaults,omitempty"`
+	ConfigurationError    string                                       `json:"configuration_error,omitempty"`
+	Automatic             SetupProgress                                `json:"automatic"`
+	AdminPasswordStatus   string                                       `json:"admin_password_status"`
+	CloudflareTokenStatus string                                       `json:"dns_token_status"`
+	AdminPasswordError    string                                       `json:"admin_password_error,omitempty"`
+	CloudflareTokenError  string                                       `json:"dns_token_error,omitempty"`
+	SetupID               string                                       `json:"setup_id"`
+	TestTLS               bool                                         `json:"test_tls"`
+	Initialized           bool                                         `json:"initialized"`
+	Resolvers             []string                                     `json:"resolver_suggestions"`
+	ExternalCaddy         bool                                         `json:"external_caddy"`
 }
 
 type SetupHandoff struct {
@@ -140,23 +147,8 @@ func credentialStatus(value string, validate func(string) error) (string, string
 	return "ready", ""
 }
 
-func (service *Service) configuredToken(token string, useConfigured bool, setupID string) (string, error) {
-	if useConfigured {
-		if setupID != service.setupID || service.options.SetupToken == "" {
-			return "", domain.Conflict("预配置凭据确认已失效，请重新读取初始化状态并确认")
-		}
-		if token != "" {
-			return "", domain.Invalid("已选择预配置 Token，不接受重复输入")
-		}
-		token = service.options.SetupToken
-	} else if service.options.SetupToken != "" && !service.externalCaddy() && !service.options.TestTLS {
-		return "", domain.Invalid("请确认使用已配置的 Cloudflare Token")
-	}
-	return token, domain.ValidateCloudflareToken(token)
-}
-
 func (service *Service) ConfiguredSetupToken(setupID string) (string, error) {
-	return service.configuredToken("", true, setupID)
+	return service.configuredProviderToken(service.dnsProvider(), "", true, setupID)
 }
 
 func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
@@ -180,7 +172,17 @@ func (service *Service) SetupStatus(ctx context.Context) (SetupStatus, error) {
 		}
 	}
 	status.AdminPasswordStatus, status.AdminPasswordError = credentialStatus(service.options.SetupPassword, domain.ValidatePassword)
-	status.CloudflareTokenStatus, status.CloudflareTokenError = credentialStatus(service.options.SetupToken, domain.ValidateCloudflareToken)
+	status.DNSProvider = service.dnsProvider()
+	if _, providerErr := domain.NormalizeDNSProvider(status.DNSProvider); providerErr != nil {
+		status.ConfigurationError = providerErr.Error()
+	}
+	status.DNSCredentials = map[domain.DNSProvider]SetupCredentialStatus{}
+	for _, p := range []domain.DNSProvider{domain.DNSProviderCloudflare, domain.DNSProviderDNSPod} {
+		state, msg := credentialStatus(service.setupToken(p), func(t string) error { return domain.ValidateDNSToken(p, t) })
+		status.DNSCredentials[p] = SetupCredentialStatus{state, msg}
+	}
+	selected := status.DNSCredentials[status.DNSProvider]
+	status.CloudflareTokenStatus, status.CloudflareTokenError = selected.Status, selected.Error
 	return status, err
 }
 
@@ -373,27 +375,42 @@ func (service *Service) completeSetupLocked(ctx context.Context, request SetupRe
 		return "", err
 	}
 	options := service.options
+	provider, providerErr := domain.NormalizeDNSProvider(request.DNSProvider)
+	if providerErr != nil {
+		return "", providerErr
+	}
+	if request.DNSProvider == "" {
+		provider = service.dnsProvider()
+	}
+	if request.Cloudflare != nil {
+		provider, err = domain.NormalizeDNSProvider(request.Cloudflare.Provider)
+		if err != nil {
+			return "", err
+		}
+		request.Cloudflare.Provider = provider
+	}
+	options.DNSProvider = provider
 	options.RuntimePolicy = setupActiveSettings(settings)
 	certificate := domain.CertificateStatus{Mode: domain.CertificateModeBootstrapInternal, ActivationStatus: "idle", PublicStatus: "unknown"}
 	if options.AdminURL != "" {
-		certificate = domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "pending"}
+		certificate = domain.CertificateStatus{Mode: domain.CertificateMode(provider), ActivationStatus: "success", PublicStatus: "pending"}
 	}
 	automaticDNS := !service.externalCaddy() && !options.TestTLS
 	if automaticDNS {
 		if request.Cloudflare == nil || request.Cloudflare.Fingerprint == "" {
-			return "", domain.Invalid("请填写 Cloudflare Token 并检查 DNS 记录")
+			return "", domain.Invalid("请填写 DNS 凭据并检查 DNS 记录")
 		}
 		address, addressErr := domain.NormalizeSetupAddress(request.Cloudflare.Address)
 		if addressErr != nil {
 			return "", addressErr
 		}
 		request.Cloudflare.Address = address
-		if service.setupDNS == nil || service.setupIntent == nil || service.secrets == nil || service.bootstrapTLS == nil {
+		if service.dnsAdapter(provider) == nil || service.setupIntent == nil || service.secrets == nil || service.bootstrapTLS == nil {
 			return "", domain.Invalid("初始化 DNS 或 secret 存储未配置")
 		}
-		certificate = domain.CertificateStatus{Mode: domain.CertificateModeCloudflare, ActivationStatus: "success", PublicStatus: "pending"}
+		certificate = domain.CertificateStatus{Mode: domain.CertificateMode(provider), ActivationStatus: "success", PublicStatus: "pending"}
 	} else if request.Cloudflare != nil {
-		return "", domain.Invalid("当前模式不接受本机 Cloudflare 凭据")
+		return "", domain.Invalid("当前模式不接受本机 DNS 凭据")
 	}
 	options.CertificateMode = certificate.Mode
 	caddyConfig := caddyConfigForOptions(options)
@@ -434,15 +451,18 @@ func (service *Service) completeSetupLocked(ctx context.Context, request SetupRe
 	}
 	if automaticDNS {
 		cf := request.Cloudflare
-		cf.Token, err = service.configuredToken(cf.Token, cf.UseConfiguredToken, cf.SetupID)
+		cf.Token, err = service.configuredProviderToken(provider, cf.Token, cf.UseConfiguredToken, cf.SetupID)
 		if err != nil {
 			return "", err
 		}
 		dnsContext, cancelDNS := context.WithTimeout(ctx, 30*time.Second)
 		defer cancelDNS()
-		plan, previewErr := service.setupDNS.Preview(dnsContext, cf.Token, strings.TrimPrefix(settings.AdminDomain, "caddyadmin."), cf.Address)
+		plan, previewErr := service.PreviewSetupDNSProvider(dnsContext, provider, cf.Token, strings.TrimPrefix(settings.AdminDomain, "caddyadmin."), cf.Address)
 		if previewErr != nil {
 			return "", previewErr
+		}
+		if err = checkDNSWriteCooldown(intent, plan); err != nil {
+			return "", err
 		}
 		recovered := cf.Confirmed && setupDNSRecovered(intent, plan, cf.Fingerprint)
 		if plan.Fingerprint != cf.Fingerprint && !recovered {
@@ -457,7 +477,7 @@ func (service *Service) completeSetupLocked(ctx context.Context, request SetupRe
 		// The wizard checks propagation from the browser via DoH. Server-side
 		// resolution may filter private addresses; Cloudflare records and the
 		// checked or confirmed change fingerprint remain authoritative for completion.
-		if err = service.secrets.WriteCloudflareToken(cf.Token); err != nil {
+		if err = service.writeDNSToken(provider, cf.Token); err != nil {
 			return "", err
 		}
 		if err = service.caddy.Validate(ctx, raw); err != nil {
@@ -519,5 +539,5 @@ func (service *Service) completeSetupLocked(ctx context.Context, request SetupRe
 }
 
 func (service *Service) ResolveSetupToken(token string, useConfigured bool, setupID string) (string, error) {
-	return service.configuredToken(token, useConfigured, setupID)
+	return service.configuredProviderToken(service.dnsProvider(), token, useConfigured, setupID)
 }

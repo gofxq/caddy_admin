@@ -26,7 +26,7 @@ it('retains drafts and published versions across a reload and resets explicitly'
 })
 it('stores credential status without storing entered passwords or tokens',async()=>{
  const {api}=await import('./api')
- await api('/settings/cloudflare',{method:'POST',body:{token:'sensitive-demo-token',enable:true}})
+ await api('/settings/dns',{method:'POST',body:{token:'sensitive-demo-token',enable:true}})
  await api('/auth/password',{method:'POST',body:{current:'sensitive-current',password:'sensitive-new-password'}})
  const saved=Array.from({length:sessionStorage.length},(_,i)=>sessionStorage.getItem(sessionStorage.key(i)!)).join('')
  expect(saved).not.toMatch(/sensitive-demo-token|sensitive-current|sensitive-new-password/)
@@ -47,7 +47,7 @@ it('keeps the demo usable when browser storage is unavailable',async()=>{
  vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('storage denied')})
  try{
   const {api}=await import('./api')
-  await api('/settings/cloudflare',{method:'POST',body:{token:'demo-token'}})
+  await api('/settings/dns',{method:'POST',body:{token:'demo-token'}})
   expect((await api<Settings>('/settings')).token_configured).toBe(true)
  }finally{vi.restoreAllMocks()}
 })

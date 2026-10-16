@@ -69,7 +69,7 @@ coverage.out
 *.test
 __pycache__/
 *.py[cod]
-
+localtest/
 # Logs, temporary editor files and OS metadata.
 *.log
 *.log.*

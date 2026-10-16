@@ -36,7 +36,7 @@ describe('static demo',()=>{
   expect(demo.handle('POST','/setup/recheck',{setup_id:'static-demo'}).status).toBe(409)
   const plan=demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body as {fingerprint:string}
   expect(plan).toMatchObject({name:'*.demo.example.com',address:'192.168.1.5',action:'create'})
-  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},cloudflare:{address:'192.168.1.5',fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(200)
+  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},dns:{address:'192.168.1.5',fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(200)
   expect(demo.handle('POST','/setup/dns/preview',{domain:'demo.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
   expect(demo.handle('POST','/setup/preflight',{settings:{domain:'demo.example.com',resolvers:['1.1.1.1']}}).body).toMatchObject({can_complete:true,requires_acknowledgement:false})
   expect(demo.handle('POST','/setup/complete',{username:'visitor',password:'never-store-password',token:'never-store-token',settings:{domain:'demo.example.com',resolvers:['1.1.1.1']}}).status).toBe(200)
@@ -51,12 +51,12 @@ describe('static demo',()=>{
   expect(demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
   const plan=demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.8'}).body as {fingerprint:string}
   expect(plan).toMatchObject({action:'update',old_address:'192.168.1.5'})
-  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'home.example.com'},cloudflare:{address:'192.168.1.8',fingerprint:plan.fingerprint,confirmed:false}}).status).toBe(422)
+  expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'home.example.com'},dns:{address:'192.168.1.8',fingerprint:plan.fingerprint,confirmed:false}}).status).toBe(422)
   expect(demo.handle('POST','/setup/dns/preview',{domain:'home.example.com',address:'192.168.1.5'}).body).toMatchObject({action:'reuse'})
  })
  it('finishes certificate activation and exposes domain DNS operations',()=>{
   const demo=createMockApi({staticDemo:true})
-  expect(demo.handle('POST','/settings/cloudflare',{token:'never-store-token',enable:true}).status).toBe(200)
+  expect(demo.handle('POST','/settings/dns',{token:'never-store-token',enable:true}).status).toBe(200)
   expect(demo.handle('GET','/settings').body).toMatchObject({token_configured:true,certificate_status:{activation_status:'success',public_status:'ready'}})
   expect(demo.handle('POST','/settings/dns/preview',{domain_id:'home',address:'192.168.1.5'}).status).toBe(200)
   expect(demo.handle('POST','/settings/dns/confirm',{fingerprint:'mock-domain-dns',confirm:true}).status).toBe(200)
@@ -134,4 +134,17 @@ it('keeps imported console restrictions and extra domains in drafts during setup
  expect(data.config).toMatchObject(imported)
  expect(data.active_config.console_lan_only).toBe(false)
  expect(data.active_config.domains).toEqual([imported.domains[0]])
+})
+
+it('binds DNSPod simulator confirmations to provider and token without exposing secrets',()=>{
+ const demo=createMockApi({staticDemo:true,setup:true})
+ const credentials={provider:'dnspod',token:'123,private-token',address:'192.168.1.5'}
+ const plan=demo.handle('POST','/setup/dns/preview',{...credentials,domain:'demo.example.com'}).body as {fingerprint:string}
+ expect(plan).toMatchObject({provider:'dnspod'})
+ expect(JSON.stringify(plan)).not.toContain('private-token')
+ expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},dns:{...credentials,provider:'cloudflare',fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(409)
+ expect(demo.handle('POST','/setup/dns/confirm',{settings:{domain:'demo.example.com'},dns:{...credentials,fingerprint:plan.fingerprint,confirmed:true}}).status).toBe(200)
+ demo.handle('POST','/setup/complete',{username:'visitor',settings:{domain:'demo.example.com'},dns:credentials})
+ expect(demo.handle('GET','/settings').body).toMatchObject({dns_provider:'dnspod',certificate_status:{mode:'dnspod'}})
+ expect(JSON.stringify(demo.handle('GET','/settings').body)).not.toContain('private-token')
 })

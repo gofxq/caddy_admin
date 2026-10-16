@@ -108,7 +108,7 @@ func (managedSettingsRow) TableName() string { return "managed_settings" }
 
 type certificateStateRow struct {
 	ID               int    `gorm:"column:id;primaryKey;autoIncrement:false;check:chk_certificate_state_singleton,id = 1"`
-	Mode             string `gorm:"column:mode;type:TEXT;not null;check:chk_certificate_state_mode,mode = 'bootstrap_internal' OR mode = 'cloudflare'"`
+	Mode             string `gorm:"column:mode;type:TEXT;not null;check:chk_certificate_state_mode,mode = 'bootstrap_internal' OR mode = 'cloudflare' OR mode = 'dnspod'"`
 	ActivationStatus string `gorm:"column:activation_status;type:TEXT;not null;check:chk_certificate_state_activation,activation_status = 'idle' OR activation_status = 'applying' OR activation_status = 'uncertain' OR activation_status = 'failed' OR activation_status = 'success'"`
 	PublicStatus     string `gorm:"column:public_status;type:TEXT;not null;check:chk_certificate_state_public,public_status = 'unknown' OR public_status = 'pending' OR public_status = 'ready' OR public_status = 'error'"`
 	LastErrorClass   string `gorm:"column:last_error_class;type:TEXT;not null;default:''"`

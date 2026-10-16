@@ -87,6 +87,8 @@ github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/caddy-dns/cloudflare v0.2.4 h1:h51SY6+JeevBcPtQ6xZxGRakYzbGiOXeJCFowQj/bGg=
 github.com/caddy-dns/cloudflare v0.2.4/go.mod h1:Rge8GoKEa65RIUd1GQ9DmOmnjD9FMztz5yiaKvf351E=
+github.com/caddy-dns/dnspod v0.0.5-0.20260325061251-fb7cc31cc04c h1:6QrvcRisAbWdWGmtiDXCrE3CuB3x7lZbJQ2P3TAIyHM=
+github.com/caddy-dns/dnspod v0.0.5-0.20260325061251-fb7cc31cc04c/go.mod h1:7kJoTsAuTniBbnzgmIgc6S5NyOvZTTpo8WXkV+1Ey4U=
 github.com/caddyserver/caddy/v2 v2.11.3 h1:/vFbdjcs2DtzcWTIxHybf5R5TspYFFThlZffChyBFHg=
 github.com/caddyserver/caddy/v2 v2.11.3/go.mod h1:J9qdmC4A1g+q8wBa+bEWOUgPJhUgs00juslRJGbGzlU=
 github.com/caddyserver/certmagic v0.25.3 h1:mGf5ba8F7xA4c5jfDZZbK2buY1VEkbnwpMDixaju94A=
@@ -260,6 +262,8 @@ github.com/mitchellh/reflectwalk v1.0.2 h1:G2LzWKi524PWgd3mLHV8Y5k7s6XUvT0Gef6zx
 github.com/mitchellh/reflectwalk v1.0.2/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
+github.com/nrdcg/dnspod-go v0.4.0 h1:c/jn1mLZNKF3/osJ6mz3QPxTudvPArXTjpkmYj0uK6U=
+github.com/nrdcg/dnspod-go v0.4.0/go.mod h1:vZSoFSFeQVm2gWLMkyX61LZ8HI3BaqtHZWgPTGKr6KQ=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2DcNVpwGmV9E1BkGknEliJkfwQj0=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=

@@ -102,7 +102,7 @@ func (service *Service) StartAutomaticSetup(ctx context.Context, done func()) <-
 				return
 			}
 			defaults, err := service.setupDefaults()
-			complete := strings.TrimSpace(service.options.SetupPassword) != "" && strings.TrimSpace(service.options.SetupToken) != "" && strings.TrimSpace(service.options.SetupDefaults.Domain) != "" && strings.TrimSpace(service.options.SetupDefaults.Address) != ""
+			complete := strings.TrimSpace(service.options.SetupPassword) != "" && strings.TrimSpace(service.setupToken(service.dnsProvider())) != "" && strings.TrimSpace(service.options.SetupDefaults.Domain) != "" && strings.TrimSpace(service.options.SetupDefaults.Address) != ""
 			if !complete {
 				service.setSetupProgress("manual", "configuration", "")
 				return
@@ -111,11 +111,11 @@ func (service *Service) StartAutomaticSetup(ctx context.Context, done func()) <-
 				service.setSetupProgress("failed", "configuration", err.Error())
 				return
 			}
-			if domain.ValidatePassword(service.options.SetupPassword) != nil || domain.ValidateCloudflareToken(service.options.SetupToken) != nil {
-				service.setSetupProgress("failed", "configuration", "预配置密码或 Cloudflare Token 格式无效，请修正部署配置后重建容器")
+			if domain.ValidatePassword(service.options.SetupPassword) != nil || domain.ValidateDNSToken(service.dnsProvider(), service.setupToken(service.dnsProvider())) != nil {
+				service.setSetupProgress("failed", "configuration", "预配置密码或 DNS 服务商 Token 格式无效，请修正部署配置后重建容器")
 				return
 			}
-			if service.snapshot == nil || service.setupIntent == nil || service.setupDNS == nil || service.setupDoH == nil {
+			if service.snapshot == nil || service.setupIntent == nil || service.dnsAdapter(service.dnsProvider()) == nil || service.setupDoH == nil {
 				service.setSetupProgress("failed", "configuration", "初始化存储或 DNS 检查不可用，请检查部署配置")
 				return
 			}
@@ -131,7 +131,7 @@ func (service *Service) StartAutomaticSetup(ctx context.Context, done func()) <-
 			}
 			settings := SetupSettings{Domain: defaults.Domain, Resolvers: defaults.Resolvers}
 			service.setSetupProgress("running", "saving", "", preflight.Checks...)
-			_, err = service.completeSetupLocked(taskCtx, SetupRequest{Username: defaults.Username, UseConfiguredPassword: true, UseConfiguredToken: true, SetupID: service.setupID, Settings: settings, Cloudflare: &SetupCloudflare{Address: defaults.Address, Fingerprint: plan.Fingerprint}})
+			_, err = service.completeSetupLocked(taskCtx, SetupRequest{Username: defaults.Username, UseConfiguredPassword: true, UseConfiguredToken: true, SetupID: service.setupID, Settings: settings, Cloudflare: &SetupCloudflare{Provider: service.dnsProvider(), Address: defaults.Address, Fingerprint: plan.Fingerprint}})
 			if err != nil {
 				var appErr *domain.AppError
 				if errors.As(err, &appErr) && (appErr.Code == "setup_local_persistence" || appErr.Code == "existing_snapshot" || appErr.Code == "setup_result_uncertain") {
@@ -156,10 +156,10 @@ func safeAutomaticSetupError(err error) string {
 	if errors.As(err, &appErr) {
 		switch appErr.Code {
 		case "cloudflare_unavailable", "cloudflare_api":
-			return "Cloudflare 暂时不可达或操作未完成；请检查网络和 Token 权限后通过向导重试"
+			return "DNS 服务商 暂时不可达或操作未完成；请检查网络和 Token 权限后通过向导重试"
 		case "invalid":
-			return "Cloudflare 凭据或 DNS 记录无法复用；请检查 Zone Read、DNS Edit 权限与记录冲突后通过向导接续"
+			return "DNS 服务商 凭据或 DNS 记录无法复用；请检查 Zone Read、DNS Edit 权限与记录冲突后通过向导接续"
 		}
 	}
-	return "凭据或 DNS 检查失败；请检查 Cloudflare 连接、Token 权限和记录冲突后通过向导重试"
+	return "凭据或 DNS 检查失败；请检查 DNS 服务商 连接、Token 权限和记录冲突后通过向导重试"
 }

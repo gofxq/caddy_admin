@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/caddy-dns/cloudflare v0.2.4
+	github.com/caddy-dns/dnspod v0.0.5-0.20260325061251-fb7cc31cc04c
 	github.com/caddyserver/caddy/v2 v2.11.3
 	github.com/prometheus/client_golang v1.23.2
 	go.uber.org/zap v1.28.0
@@ -83,6 +84,7 @@ require (
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/nrdcg/dnspod-go v0.4.0 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pires/go-proxyproto v0.12.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

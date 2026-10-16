@@ -8,7 +8,7 @@ import {Overview} from './pages/Overview'
 import type {Service,ServiceList,Settings as SettingsData} from './model'
 
 const service:Service={id:'photos',name:'照片库',domain_id:'home',hostname:'photos.example.com',scheme:'http',host:'10.0.0.8',port:2283,enabled:true,notes:'',dial:'10.0.0.8:2283',updated_at:'now'}
-const settings:SettingsData={revision:3,config:{origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[{id:'home',name:'example.com',access:'trusted'}],console_lan_only:false,lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['1.1.1.1'],test_tls:true},active_config:null!,manager_version:'test',caddy_version:'test',cloudflare_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:''},external_caddy:false}
+const settings:SettingsData={revision:3,config:{origin:'https://caddyadmin.example.com',admin_domain:'caddyadmin.example.com',domains:[{id:'home',name:'example.com',access:'trusted'}],console_lan_only:false,lan_cidrs:['10.0.0.0/8'],upstream_cidrs:['10.0.0.0/8'],allowed_names:[],denied_ips:[],resolvers:['1.1.1.1'],test_tls:true},active_config:null!,manager_version:'test',caddy_version:'test',dns_provider:'cloudflare',dns_module:true,token_configured:false,certificate_status:{mode:'bootstrap_internal',activation_status:'idle',public_status:'unknown',last_error_class:'',updated_at:''},external_caddy:false}
 settings.active_config=settings.config
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status})
 const clients:QueryClient[]=[]

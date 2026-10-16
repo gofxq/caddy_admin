@@ -33,8 +33,8 @@ func containerCommands(c config.Config, executable string, initialized bool) []*
 	return commands
 }
 
-func needsCloudflareToken(c config.Config, certificateMode domain.CertificateMode) bool {
-	return c.AdminURL == "" && !c.TestTLS && certificateMode == domain.CertificateModeCloudflare
+func needsDNSToken(c config.Config, certificateMode domain.CertificateMode) bool {
+	return c.AdminURL == "" && !c.TestTLS && domain.IsPublicCertificateMode(certificateMode)
 }
 
 func runContainer(c config.Config) error {
@@ -88,13 +88,11 @@ func runContainer(c config.Config) error {
 			return fmt.Errorf("incompatible embedded snapshot: restore an embedded-mode backup or initialize a separate deployment; external snapshots cannot be started locally")
 		}
 	}
-	if initialized && needsCloudflareToken(c, certificateMode) {
-		if err := loadCloudflareSecret(); err != nil {
+	if initialized && needsDNSToken(c, certificateMode) {
+		if err := loadDNSSecret(c.DataDir, domain.DNSProvider(certificateMode)); err != nil {
 			return err
 		}
-		if err := domain.ValidateCloudflareToken(os.Getenv("CLOUDFLARE_API_TOKEN")); err != nil {
-			return err
-		}
+
 	}
 
 	executable, err := os.Executable()
@@ -120,7 +118,6 @@ func reconcileCertificateActivation(store *gormstore.Store, c config.Config) err
 	}
 	activeHash := domain.Fingerprint(raw)
 	if status.CandidateHash != "" && activeHash == status.CandidateHash {
-		status.Mode = domain.CertificateModeCloudflare
 		status.ActivationStatus = "success"
 		status.PublicStatus = "pending"
 		status.LastErrorClass = ""

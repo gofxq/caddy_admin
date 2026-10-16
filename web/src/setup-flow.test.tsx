@@ -38,7 +38,7 @@ it('continues with existing DNS after checking without showing change confirmati
  fireEvent.click(screen.getByRole('button',{name:'下一步'}));await screen.findByRole('heading',{name:'确认配置'})
  fireEvent.click(screen.getByRole('button',{name:'完成初始化'}));await screen.findByRole('heading',{name:'初始化已完成'})
  const request=fetch.mock.calls.find(([p])=>p.endsWith('/complete'))!
- expect(JSON.parse(request[1].body).cloudflare).toMatchObject({fingerprint:'plan',confirmed:false})
+ expect(JSON.parse(request[1].body).dns).toMatchObject({fingerprint:'plan',confirmed:false})
 })
 
 it('blocks reuse when Token validation fails and keeps the inputs for retry',async()=>{
@@ -238,4 +238,55 @@ it('queries DoH before reading the Cloudflare plan',async()=>{
  const cf=fetch.mock.calls.findIndex(([p])=>p.endsWith('/dns/preview'))
  expect(doh).toBeLessThan(cf)
  expect(fetch.mock.calls.some(([p])=>p.endsWith('/dns/confirm'))).toBe(false)
+})
+
+it('defaults to Cloudflare and clears checked DNS and the token when switching provider',async()=>{
+ const fetch=installAPI({automatic:true,action:'reuse'});render(<Setup pollLogin={false}/>);await reachDNS()
+ expect(screen.getByLabelText('DNS 服务商')).toHaveValue('cloudflare')
+ fireEvent.change(screen.getByLabelText('Cloudflare API Token'),{target:{value:'secret-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'dnspod'}})
+ expect(screen.getByLabelText('DNSPod API Token')).toHaveValue('')
+ expect(screen.getByRole('button',{name:'下一步'})).toBeDisabled()
+ expect(screen.queryByRole('table',{name:'DNS 查询结果'})).not.toBeInTheDocument()
+ fireEvent.change(screen.getByLabelText('DNSPod API Token'),{target:{value:'123,private-token'}})
+ fireEvent.click(screen.getByRole('button',{name:'检查 DNS'}))
+ await waitFor(()=>expect(screen.getByRole('button',{name:'下一步'})).toBeEnabled())
+ const previews=fetch.mock.calls.filter(([p])=>p.endsWith('/dns/preview'))
+ expect(JSON.parse(previews.at(-1)![1].body)).toMatchObject({provider:'dnspod',token:'123,private-token'})
+ expect(document.body.textContent).not.toContain('private-token')
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'cloudflare'}})
+ expect(screen.getByLabelText('Cloudflare API Token')).toHaveValue('')
+})
+
+it('uses provider-specific deployment credential status without echoing credentials',async()=>{
+ const fetch=installAPI({automatic:true}),original=fetch.getMockImplementation()!
+ fetch.mockImplementation(async(path:string)=>path.endsWith('/status')?reply({initialized:false,dns_provider:'dnspod',dns_credentials:{cloudflare:{status:'missing'},dnspod:{status:'ready'}}}):original(path))
+ render(<Setup pollLogin={false}/>);await reachDNS()
+ expect(screen.getByLabelText('DNS 服务商')).toHaveValue('cloudflare')
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'dnspod'}})
+ const confirmation=screen.getByLabelText('我确认使用已配置的 DNSPod Token')
+ expect(confirmation).not.toBeChecked()
+ expect(screen.queryByLabelText('DNSPod API Token')).not.toBeInTheDocument()
+ fireEvent.click(confirmation)
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'cloudflare'}})
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'dnspod'}})
+ expect(screen.getByLabelText('我确认使用已配置的 DNSPod Token')).not.toBeChecked()
+})
+
+it('persists external Caddy DNS provider selection without local credentials',async()=>{
+ const fetch=installAPI(),original=fetch.getMockImplementation()!
+ fetch.mockImplementation(async(path:string)=>path.endsWith('/status')?reply({initialized:false,external_caddy:true}):original(path))
+ render(<Setup pollLogin={false}/>);await reachDNS()
+ fireEvent.change(screen.getByLabelText('Caddy 访问 IP'),{target:{value:'192.168.2.6'}})
+ fireEvent.change(screen.getByLabelText('DNS 服务商'),{target:{value:'dnspod'}})
+ expect(screen.queryByLabelText('DNSPod API Token')).not.toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button',{name:'下一步'}))
+ await screen.findByRole('heading',{name:'确认配置'})
+ fireEvent.click(screen.getByRole('button',{name:'完成初始化'}))
+ await screen.findByRole('heading',{name:'初始化已完成'})
+ const body=JSON.parse(fetch.mock.calls.find(([p])=>p.endsWith('/complete'))![1].body)
+ expect(body.dns_provider).toBe('dnspod')
+ expect(body).not.toHaveProperty('dns')
 })

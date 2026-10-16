@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -198,5 +199,57 @@ func TestOpenStoreRejectsCurrentSchemaMissingPendingIndex(t *testing.T) {
 	if reopened, openErr := Open(path); openErr == nil {
 		reopened.Close()
 		t.Fatal("v7 database missing the pending-deployment constraint was accepted")
+	}
+}
+
+func TestV7MigrationPreservesHistoryAndEnablesDNSPod(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := gorm.G[draftRevisionRow](s.db).Take(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	if err = s.db.Raw("SELECT sql FROM sqlite_master WHERE type='table' AND name='certificate_state'").Scan(&sql).Error; err != nil {
+		t.Fatal(err)
+	}
+	sql = strings.Replace(sql, " OR mode = 'dnspod'", "", 1)
+	if err = s.db.Exec("ALTER TABLE certificate_state RENAME TO certificate_state_v8").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.Exec(sql).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.Exec("INSERT INTO certificate_state SELECT * FROM certificate_state_v8").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.Exec("DROP TABLE certificate_state_v8").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.db.Model(&schemaVersionRow{}).Where("version = ?", currentSchemaVersion).Update("version", 7).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	after, err := gorm.G[draftRevisionRow](s.db).Take(context.Background())
+	if err != nil || before != after {
+		t.Fatal("history changed", before, after, err)
+	}
+	status := domain.CertificateStatus{Mode: domain.CertificateModeDNSPod, ActivationStatus: "success", PublicStatus: "pending"}
+	if err = s.SetCertificateStatus(context.Background(), status); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.CertificateStatus(context.Background())
+	if err != nil || got.Mode != domain.CertificateModeDNSPod {
+		t.Fatal(got, err)
 	}
 }
