@@ -1,5 +1,10 @@
 name: verify
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: ['**']
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -42,7 +47,7 @@ jobs:
   publish:
     name: Publish container image
     needs: tests
-    if: github.repository == 'gofxq/caddy_admin' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.repository == 'gofxq/caddy_admin' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,6 +62,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare image tags
+        id: image
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Git tag is not a valid container image tag"
+            exit 1
+          fi
+          {
+            echo 'tags<<IMAGE_TAGS'
+            echo "ghcr.io/gofxq/caddy-admin:$RELEASE_TAG"
+            echo "ghcr.io/gofxq/caddy-admin:sha-$GITHUB_SHA"
+            if [[ "$RELEASE_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo 'ghcr.io/gofxq/caddy-admin:latest'
+            fi
+            echo 'IMAGE_TAGS'
+          } >> "$GITHUB_OUTPUT"
       - name: Build and publish
         uses: docker/build-push-action@v7
         with:
@@ -64,9 +87,7 @@ jobs:
           target: app
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/gofxq/caddy-admin:latest
-            ghcr.io/gofxq/caddy-admin:sha-${{ github.sha }}
+          tags: ${{ steps.image.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

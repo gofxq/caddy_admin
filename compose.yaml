@@ -1,7 +1,7 @@
 name: caddy-admin # 可选：固定项目名；不设置时使用目录名。
 services: # 内置模式：docker compose up -d，然后打开 http://服务器IP/setup。
   caddy:
-    image: ghcr.io/gofxq/caddy-admin:latest # 必需：拉取预构建镜像，无需源码；固定版本可改为 sha-提交SHA 标签。
+    image: ghcr.io/gofxq/caddy-admin:latest # 必需：拉取预构建镜像，无需源码；固定版本可改为 v1.0.0 等版本标签或 sha-提交SHA 标签。
     restart: unless-stopped # 异常退出自动重启，手动停止后保持停止。
     init: true # 回收子进程并转发停止信号。
     stop_grace_period: 20s # 给 Manager/Caddy 正常停止留出时间。

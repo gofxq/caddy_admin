@@ -131,7 +131,7 @@ docker compose pull
 docker compose up -d
 ```
 
-源码验证更新源码后使用 `make up`；外部模式追加对应文件。维护期间始终沿用原项目名、文件组合和数据目录。需要固定镜像时将 `image` 改为发布的 `sha-完整提交SHA` 标签或镜像 digest；`latest` 会随默认分支的新发布更新。
+源码验证更新源码后使用 `make up`；外部模式追加对应文件。维护期间始终沿用原项目名、文件组合和数据目录。需要固定镜像时将 `image` 改为发布的版本标签（例如 `v1.0.0`）、`sha-完整提交SHA` 标签或镜像 digest；`latest` 会随正式版本 tag 发布更新。
 
 只接受空库或结构完整的当前 v7 数据库，不支持旧版本升级或自动兼容导入。v6 数据库与 v1 业务配置文件明确拒绝，不提供原地无损升级；先保留旧实例与加密快照，在独立新实例重新配置，勿删除数据绕过拒绝。管理员与设置必须同时存在或同时为空；部分实例、不支持的版本及损坏结构会明确报错，保留数据。不要同时运行两个 Manager，也不要删除数据库、锁或快照来绕过失败。更新不主动改写历史发布 JSON 或启动快照。
 
@@ -195,7 +195,14 @@ docker compose -f compose.yaml -f compose.external.yaml up -d
 
 ## 镜像发布
 
-GitHub Actions 的 `verify` 工作流在默认分支 push 或手动运行时，先完成检查和本地镜像构建，再发布 `ghcr.io/gofxq/caddy-admin:latest` 及 `sha-完整提交SHA`，构建目标为 `app`，平台为 `linux/amd64` 和 `linux/arm64`。PR、其他分支和 fork 不发布该镜像；使用工作流自身的 `GITHUB_TOKEN` 和 `packages: write` 权限，无需额外 registry 密钥。
+GitHub Actions 的 `verify` 工作流在分支 push、tag push、PR 或手动运行时执行检查。向原仓库推送 tag 且全部检查通过后，会发布与 Git tag 同名的 `ghcr.io/gofxq/caddy-admin:<tag>` 以及 `sha-完整提交SHA`。也可选择该 tag 手动重跑工作流。构建目标为 `app`，平台为 `linux/amd64` 和 `linux/arm64`，使用工作流的 `GITHUB_TOKEN` 与 `packages: write` 权限。
+
+正式版本 tag（例如 `v1.0.0` 或 `1.0.0`）同时更新 `latest`。预发布 tag（例如 `v1.1.0-rc.1`）仅发布版本及 SHA 标签。Git tag 须符合 Docker 镜像标签格式，最长 128 个字符。分支 push 和 PR 执行验证，镜像发布由 tag 触发。
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 维护者首次发布后，将 GitHub Packages 中的 `caddy-admin` 包设为 Public，使用户可匿名拉取。若同名包已经存在，确认它关联到 `gofxq/caddy_admin` 并允许该仓库工作流写入。首次发布与公开设置完成前，安装命令无法拉取镜像，可使用源码验证覆盖文件在独立卷中验证。
 

@@ -1,7 +1,7 @@
 # name: caddy-admin # 可选：固定项目名；默认使用目录名，与现有实例保持一致，避免创建另一组容器。
 services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替代 compose.yaml，不要同时加载两者。
   caddy: # 默认内置 Caddy；外部模式追加 -f compose.external.yaml，隔离测试追加 -f compose.validation.yaml。
-    image: ghcr.io/gofxq/caddy-admin:latest # 必需：预构建镜像；固定版本可改为 sha-提交SHA 标签，源码验证追加 -f compose.validation.yaml（改用独立验证卷）。
+    image: ghcr.io/gofxq/caddy-admin:latest # 必需：预构建镜像；固定版本可改为 v1.0.0 等版本标签或 sha-提交SHA 标签，源码验证追加 -f compose.validation.yaml（改用独立验证卷）。
     restart: unless-stopped # 自动重启异常退出的服务；手动停止后保持停止。
     init: true # 回收子进程并转发停止信号。
     stop_grace_period: 20s # 给 Manager/Caddy 正常停止留出时间。
