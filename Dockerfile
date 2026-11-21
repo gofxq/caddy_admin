@@ -3,7 +3,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY deploy/caddy/go.mod deploy/caddy/go.sum ./
 RUN go mod download
-COPY deploy/caddy/main.go ./
+COPY deploy/caddy/*.go ./
 COPY deploy/caddy/observability ./observability
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /usr/bin/caddy .
 
@@ -18,11 +18,11 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /manager ./cmd/manager
 
 FROM node:24-alpine AS web-build
 WORKDIR /src
-RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN corepack enable && corepack prepare yarn@1.22.22 --activate
+COPY web/package.json web/yarn.lock ./
+RUN yarn install --frozen-lockfile
 COPY web ./
-RUN pnpm build
+RUN yarn build
 
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates tzdata su-exec && addgroup -g 10001 app && adduser -D -H -u 10001 -G app app && mkdir -p /data/caddy /config /run/caddy /srv/snapshots /var/lib/manager /srv/web && chown -R app:app /data /config /run/caddy /srv/snapshots /var/lib/manager /srv/web

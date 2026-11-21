@@ -7,8 +7,6 @@
 .superpowers
 .idea
 .vscode
-.pnpm-store
-.npm
 .cache
 **/node_modules
 
@@ -19,6 +17,7 @@
 .ssh
 .kube
 .run
+sites
 run
 var
 backups

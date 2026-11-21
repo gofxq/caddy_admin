@@ -64,6 +64,71 @@ JSON 按对象字段名排序以减少格式噪音，数组顺序原样保留。
 
 发布在后台执行，关闭页面不会取消。网络失败时先核对部署状态；`uncertain` 表示实际运行状态待核对，不能直接重试。审计记录用于追溯操作与草稿历史。
 
+## 选择服务配置方式
+
+| 入口 | 填写内容 | 请求行为 |
+| --- | --- | --- |
+| 反向代理 | 子域名、上游 | 整个域名转给一个后端 |
+| 静态文件托管 | 子域名、静态目录 | 提供 HTML、JS、CSS、下载文件等。可以开启单页应用的首页回退 |
+| 静态站点 + API 代理 | 子域名、静态目录、API 路径、上游 | 指定路径转发给后端，其余请求读取文件 |
+| 自定义 Caddyfile | 子域名、站点内的 HTTP 指令 | 使用路径匹配、多个代理、重写、重定向、头部和文件服务组合路由 |
+
+四种方式共用「检查配置 → 保存草稿 → 预览与发布」流程。自定义模式以编辑器中的文本为准，面板统一管理外层域名匹配、访问范围、证书和管理入口。
+
+## 部署静态前端和 API
+
+前端已构建为 HTML、JS 和 CSS 时，可以用一个子域名同时访问页面和后端。每个项目建一个「静态站点 + API 代理」服务，由同一台 Caddy 提供 HTTPS。
+
+默认 Compose 将宿主机 `./sites` 只读挂载到 `/srv/sites`。例如把前端构建产物放进 `./sites/douji_admin/`，面板里的静态目录就填 `/srv/sites/douji_admin`。宿主机增删或替换这些文件后，Caddy 在下次请求时直接读取；静态内容更新无需重建镜像或重新发布路由。可在 Compose 的 `.env` 中设置 `SITES_DIR` 更改宿主机总目录，更改挂载后运行 `docker compose up -d caddy`。
+
+如果构建产物已位于独立目录，也可为该项目单独挂载。以 `douji` 为例，先确认宿主机的 `/srv/douji_admin/index.html` 已存在。在默认 Compose 部署目录添加以下 `compose.override.yaml`，然后运行 `docker compose up -d caddy` 应用挂载。
+
+```yaml
+services:
+  caddy:
+    volumes:
+      - /srv/douji_admin:/srv/sites/douji_admin:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+`extra_hosts` 用于在 Linux 容器中解析宿主网关。宿主机后端须在该网关可达的地址监听。若后端也在 Docker 中，可使用共享网络内的后端服务名和容器端口。外部 Caddy 模式下，请在实际运行 Caddy 的主机或容器准备相同的静态目录。
+
+在「服务 → 新建服务」中填写以下内容。
+
+| 字段 | douji 示例 |
+| --- | --- |
+| 服务类型 | 静态站点 + API 代理 |
+| 子域名 | `douji` |
+| 静态目录 | `/srv/sites/douji_admin` |
+| API 路径 | `/api/*` |
+| 上游协议、主机、端口 | `HTTP`、`host.docker.internal`、`18009` |
+
+保存草稿，前往「发布」校验并确认。以 `example.com` 为基础域名时，访问 `https://douji.example.com/` 可打开首页；刷新前端深层链接会返回 `index.html`。`/api/users?q=1` 原样转给后端，后端返回的 404 也会直接返回给客户端。匹配器 `/api/*` 只匹配以 `/api/` 开头的路径，裸 `/api` 走静态分支。高级配置中的压缩、头部和超时作用于 API 分支。
+
+容器内的项目目录须位于 `/srv/sites/` 下。只挂载用于公开提供的构建产物，避免链接到目录外部的符号链接，并确保 Caddy 运行用户（内置镜像为 UID 10001）可读取文件和遍历目录。配置导出和回滚包含路由设置，静态文件随各业务项目部署。其他项目可分别挂载自己的目录并登记子域名。
+
+## 自定义服务 Caddyfile
+
+在服务编辑器选择自定义模式，输入该站点大括号内的 HTTP 指令。例如同一个域名可以同时提供版本信息、API 和页面。
+
+```caddyfile
+handle /version {
+    respond "v1" 200
+}
+handle /api/* {
+    reverse_proxy host.docker.internal:18009
+}
+handle {
+    root * /srv/sites/douji_admin
+    encode zstd gzip
+    try_files {path} {path}/ /index.html
+    file_server
+}
+```
+
+面板使用当前版本的 Caddy 解析指令，按实例策略解析并固定各个上游地址，再校验完整候选。可使用 `handle_path` 去掉路径前缀，或用 `route` 明确指定执行顺序。静态根目录位于 `/srv/sites/` 下。全局选项、额外站点、文件导入以及访问进程环境和管理凭据的能力不开放给服务编辑器。配置 v2 导出保留原始文本，重新导入和回滚时会按当前策略校验。避免在源码中填写凭据，源码会保存在草稿和历史版本中。
+
 ## 服务高级配置
 
 新建或编辑服务时，可选择 HTTP、HTTPS、gRPC 明文（h2c）或 gRPC TLS（grpcs）。客户端仍从业务域名的 HTTPS 入口访问；协议选择控制 Caddy 到上游的连接。HTTPS 和 gRPC TLS 始终验证上游证书，主机名用于 SNI 与证书核对；手动端口不会因切换协议而改变。

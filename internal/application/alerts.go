@@ -135,7 +135,7 @@ func (o *Observer) Evaluate(ctx context.Context, now time.Time) {
 	if settings.UpstreamChecksEnabled {
 		enabled := []domain.Service{}
 		for _, s := range latest.Services {
-			if s.Enabled {
+			if s.Enabled && !s.FilesOnly() && s.Caddyfile == "" {
 				enabled = append(enabled, s)
 			}
 		}

@@ -24,6 +24,7 @@ id_ed25519
 
 # Instance data, exports and host snapshots.
 .run/
+/sites/
 .archive/
 run/
 var/
@@ -49,8 +50,6 @@ AGENTS.md
 .superpowers/
 .idea/
 .vscode/
-.pnpm-store/
-.npm/
 .cache/
 node_modules/
 

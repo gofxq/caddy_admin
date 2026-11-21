@@ -15,7 +15,7 @@
 ```bash
 GOPROXY=https://goproxy.cn,direct go mod download
 cd web
-corepack pnpm install --frozen-lockfile
+yarn install --frozen-lockfile
 cd ..
 make test
 make check

@@ -2,10 +2,10 @@
 test:
 	go test -race ./cmd/... ./internal/...
 	cd deploy/caddy && go test -race ./observability
-	cd web && corepack pnpm test
+	cd web && yarn test
 build:
 	go build -o bin/manager ./cmd/manager
-	cd web && corepack pnpm build
+	cd web && yarn build
 check:
 	go vet ./cmd/... ./internal/...
 	cd deploy/caddy && go vet ./...
@@ -15,13 +15,13 @@ integration:
 	cd deploy/caddy && go build -o ../../bin/caddy .
 	CADDY_INTEGRATION_BINARY=$(CURDIR)/bin/caddy go test -v ./internal/adapter/caddy -run 'Test(CaddyIntegration|CloudflareValidation)' -count=1
 dev:
-	cd web && corepack pnpm dev
+	cd web && yarn dev
 web:
-	cd web && corepack pnpm dev --mode mock --port 5177 --strictPort
+	cd web && yarn dev --mode mock --port 5177 --strictPort
 web-demo: 
-	cd web && corepack pnpm install --frozen-lockfile
-	cd web && corepack pnpm build:demo
-	cd web && corepack pnpm preview:demo
+	cd web && yarn install --frozen-lockfile
+	cd web && yarn build:demo
+	cd web && yarn preview:demo
 
 container-test:
 	docker build --target test-client -t caddy-admin:single-container-test .

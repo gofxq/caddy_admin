@@ -37,6 +37,8 @@ docker compose up -d
 
 可选：在 Compose 的 `environment` 中填写 `ADMIN_PASSWORD`、`CLOUDFLARE_API_TOKEN`，或通过环境变量/`.env` 注入；普通 Setup 只确认使用，不回显；内置正式模式额外提供 `SETUP_DOMAIN` 和 `SETUP_CADDY_IP` 时，启动后先通过服务端 DoH 检查解析，再只读核对 Cloudflare 记录；预检无阻断或需确认的警告且无需 DNS 变更则自动初始化；服务器未解析到控制台地址仅作提示，不暂停自动流程。需要变更或确认警告时接回三步向导。初始化后环境密码不重置账号，持久化 Token 优先。字面 `$` 在 Compose YAML 中写 `$$`；不要将真实凭据提交到版本控制。详见[凭据预配置](docs/operations.md#凭据预配置)。
 
+服务支持反向代理、静态文件托管、静态站点加 API 代理和自定义 HTTP 路由。默认将 `./sites` 只读挂载到 Caddy 的 `/srv/sites`，更新前端构建文件即可生效。见[配置与部署示例](docs/usage.md#选择服务配置方式)。
+
 首次登录后可直接添加服务草稿，再统一预览、校验与确认发布。新实例首个域名和新增域名默认允许互联网访问，控制台来源限制关闭；可信与上游网段默认覆盖全部 IPv4/IPv6，合法上游服务名默认全部许可，受保护目标仍拒绝。需要 LAN/VPN 限制时，在设置中将全网段替换为实际可信网段，再明确发布。已有实例及显式导入保持原策略，详见[域名与访问策略](docs/domain-access-policy.md)。
 
 ## 可选观测与排障

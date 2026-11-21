@@ -2,13 +2,20 @@ package domain
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 )
 
 type object = map[string]any
+
+func staticFileRoutes(root string, candidates []string) []any {
+	return []any{
+		object{"handle": []any{object{"handler": "vars", "root": root}}},
+		object{"match": []any{object{"file": object{"try_files": candidates}}}, "handle": []any{object{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}}},
+		object{"handle": []any{object{"handler": "file_server"}}},
+	}
+}
 
 const (
 	ClientAddressHeader          = "X-Caddy-Client-IP"
@@ -101,12 +108,9 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 	adminRouteIndex := len(routes)
 	security := object{"handler": "headers", "response": object{"set": object{"X-Content-Type-Options": []string{"nosniff"}, "Referrer-Policy": []string{"same-origin"}, "X-Frame-Options": []string{"DENY"}, "Content-Security-Policy": []string{"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}}}}
 	managerProxy := object{"handler": "reverse_proxy", "headers": object{"request": object{"set": object{ClientAddressHeader: []string{"{http.request.remote.host}"}}}}, "upstreams": []any{object{"dial": config.ManagerDial}}}
-	routes = append(routes, object{"match": []any{object{"host": adminHosts}}, "handle": []any{security, object{"handler": "subroute", "routes": []any{
-		object{"match": []any{object{"path": []string{"/api", "/api/*"}}}, "handle": []any{managerProxy}, "terminal": true},
-		object{"handle": []any{object{"handler": "vars", "root": config.StaticRoot}}},
-		object{"match": []any{object{"file": object{"try_files": []string{"{http.request.uri.path}", "/index.html"}}}}, "handle": []any{object{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}}},
-		object{"handle": []any{object{"handler": "file_server"}}},
-	}}}, "terminal": true})
+	adminAPI := object{"match": []any{object{"path": []string{"/api", "/api/*"}}}, "handle": []any{managerProxy}, "terminal": true}
+	adminRoutes := append([]any{adminAPI}, staticFileRoutes(config.StaticRoot, []string{"{http.request.uri.path}", "/index.html"})...)
+	routes = append(routes, object{"match": []any{object{"host": adminHosts}}, "handle": []any{security, object{"handler": "subroute", "routes": adminRoutes}}, "terminal": true})
 	if config.AdminURL != "" {
 		routes[adminRouteIndex] = object{"match": []any{object{"host": adminHosts}}, "handle": []any{security, managerProxy}, "terminal": true}
 	}
@@ -127,10 +131,7 @@ func Generate(config CaddyConfig, services []Service) ([]byte, error) {
 		if selected.Access == nil || (*selected.Access != "trusted" && *selected.Access != "internet") {
 			return nil, Invalid("发布启用服务前必须配置域名访问范围")
 		}
-		if service.Dial == "" {
-			return nil, fmt.Errorf("missing validated upstream")
-		}
-		handlers, err := serviceProxy(service)
+		handlers, err := serviceHandlers(service)
 		if err != nil {
 			return nil, err
 		}

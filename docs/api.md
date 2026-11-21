@@ -145,6 +145,11 @@ Setup 与交接入口的监听、网络可达性与可选来源限制和关闭�
 
 `POST /services/check` 使用与保存一致的服务输入（新建省略/清空 ID，编辑带已有 ID），绑定当前 `revision`；服务会临时按启用状态参与完整候选生成。响应为 `{revision,service,effective,config}`，`effective` 为片段合并后的规范化选项（不含原始片段），`config` 为完整 Caddy JSON 对象。需要管理员会话、精确 Origin、CSRF 及完成密码修改，响应 `Cache-Control: no-store`。服务不存在返回 404，修订冲突、执行中或待核对发布返回 409，配置操作忙碌也返回 409；无效配置返回 422，依赖不可用返回 503。检查不写草稿、历史、快照、线上配置或发布校验令牌；发布页仍须单独校验，外部实例仍须核对远端模块与实际运行状态。
 
+服务可携带以下可选字段，均支持配置 v2 导入导出。
+
+- `static_site` 包含必填的 `root`，以及可选的 `api_path` 和布尔值 `spa_fallback`。例如 `{"root":"/srv/sites/douji_admin","api_path":"/api/*","spa_fallback":true}`。省略 `api_path` 时为纯静态服务，无需上游。省略 `spa_fallback` 时，纯静态默认返回文件或 404，带 API 的静态站点默认回退到 `index.html`。目录须在 `/srv/sites/` 下，最长 1024 字节。API 路径为固定路径段加 `/*`，最长 256 字节。
+- `caddyfile` 为最多 16 KiB 的服务级 HTTP 指令文本，独立于 `static_site` 和 `advanced`。请求体可省略快捷模式的上游字段。输出中的 `resolved_routes` 是服务器维护的解析快照。导出文件仅保留可编辑的配置。纯静态或自定义模式没有单一可供 TCP 检查的上游。
+
 ## 服务详情与手动检查
 
 `GET /services/{id}` 返回 `{id,revision,draft,published,draft_domain,published_domain,runtime,recent_deployments,external_caddy}`。`draft`、`published` 与对应域名对象可以为 `null`；ID 在草稿及最新成功发布中都不存在时返回 404。已删除草稿但仍有已发布配置的服务仍可读取。

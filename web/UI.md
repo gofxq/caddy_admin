@@ -157,7 +157,7 @@
 - 公共视觉 token、布局和响应式规则维护在 [src/styles.css](src/styles.css)，共享摘要组件复用同一份业务信息。
 - 保持当前 React + TypeScript + Vite 技术栈和已有 API，不因视觉改动新增依赖或外部请求。
 - 页面行为变更补充 Vitest 交互测试，覆盖主路径、修改、错误重试和明确确认。
-- 前端目录执行 `corepack pnpm test` 与 `corepack pnpm build`；安装使用 `corepack pnpm install --frozen-lockfile`。
+- 前端目录执行 `yarn test` 与 `yarn build`；安装使用 `yarn install --frozen-lockfile`。
 - 使用 `make web` 在 `127.0.0.1:5177` 检查演示界面；这是演示 API，不代表真实部署验收。
 - 在桌面和移动尺寸检查导航、长内容换行、焦点、触控目标和确认流程。
 - 涉及初始化、发布或部署协议时，按[验收边界](../docs/verification.md)追加后端、真实 Caddy 或隔离容器验证。

@@ -150,3 +150,19 @@ it('checks advanced input without saving and keeps options in export and busines
  const preview=mock.handle('GET','/draft/preview').body as Preview
  expect(preview.changes.find(c=>c.after?.id===candidate.id)?.after?.advanced).toEqual(candidate.advanced)
 })
+
+it('stores and previews custom Caddyfile without claiming that Caddy parsed it',()=>{
+ const mock=createMockApi({staticDemo:true})
+ const initial=mock.handle('GET','/services').body as ServiceList
+ const service:Service={...initial.services[0],id:'',hostname:'custom.home.example.com',scheme:'http',host:'',port:80,dial:'',caddyfile:'respond 204'}
+ const checked=mock.handle('POST','/services/check',{revision:initial.revision,service})
+ expect(checked.status).toBe(200)
+ expect(checked.body).toMatchObject({simulated:true,service:{caddyfile:service.caddyfile}})
+ expect(mock.handle('POST','/services',{revision:initial.revision,service}).status).toBe(200)
+ const preview=mock.handle('GET','/draft/preview').body as Preview
+ expect(preview).toMatchObject({simulated:true})
+ expect(preview.changes.find(change=>change.hostname===service.hostname)?.after?.caddyfile).toBe(service.caddyfile)
+ expect(preview.config).not.toHaveProperty('apps.http.servers.srv0.routes.0.handle.0.upstreams.0.dial',':80')
+ const exported=mock.handle('GET','/configuration/export').body as {services:Partial<Service>[]}
+ expect(exported.services.find(item=>item.hostname===service.hostname)).toMatchObject({caddyfile:service.caddyfile})
+})

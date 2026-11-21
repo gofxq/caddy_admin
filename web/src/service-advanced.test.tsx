@@ -19,6 +19,20 @@ function view(check?:()=>Promise<Response>){
  render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><RouterProvider router={router}/></QueryClientProvider>)
  return fetch
 }
+it('saves the static directory and API matcher with the service',async()=>{
+ const fetch=view()
+ fireEvent.click(await screen.findByRole('button',{name:'编辑 照片库'}))
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'static_site'}})
+ expect(screen.getByLabelText('API 路径')).toHaveValue('/api/*')
+ fireEvent.change(screen.getByLabelText('静态目录'),{target:{value:'/srv/sites/photos'}})
+ fireEvent.change(screen.getByLabelText('API 路径'),{target:{value:'/backend/*'}})
+ fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
+ await waitFor(()=>expect(fetch.mock.calls.some(([,o])=>o?.method==='PUT')).toBe(true))
+ const body=JSON.parse(fetch.mock.calls.find(([,o])=>o?.method==='PUT')![1]!.body as string)
+ expect(body.service.static_site).toMatchObject({root:'/srv/sites/photos',api_path:'/backend/*'})
+ const file={...configurationFixture,services:[{...configurationFixture.services[0],static_site:body.service.static_site}]}
+ expect(parseConfiguration(JSON.stringify(file)).services[0]).toMatchObject({static_site:body.service.static_site})
+})
 it('offers grpc and preserves custom ports, edits headers/compression/timeouts and saves a draft',async()=>{
  const fetch=view();fireEvent.click(await screen.findByRole('button',{name:'编辑 照片库'}))
  fireEvent.change(screen.getByLabelText('上游协议'),{target:{value:'h2c'}})
@@ -85,4 +99,61 @@ it('clears default compression so snippets can supply it and normalizes pasted g
   expect(screen.getByLabelText('上游协议')).toHaveValue(scheme)
   expect(screen.getByLabelText('响应压缩')).toHaveValue('off')
  }
+})
+it('checks and saves a custom site body with no primary upstream field',async()=>{
+ const fetch=view()
+ fireEvent.click(await screen.findByRole('button',{name:'编辑 照片库'}))
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'custom'}})
+ const source=screen.getByLabelText('Caddyfile 正文')
+ expect(source).toHaveValue('reverse_proxy http://10.0.0.8:2283')
+ expect(screen.queryByLabelText('上游主机')).not.toBeInTheDocument()
+ expect(screen.queryByText('高级配置')).not.toBeInTheDocument()
+ const caddyfile='respond "hello"'
+ fireEvent.change(source,{target:{value:caddyfile}})
+ fireEvent.click(screen.getByRole('button',{name:'检查配置'}))
+ expect(await screen.findByText(/配置检查通过/)).toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
+ await waitFor(()=>expect(fetch.mock.calls.some(([,o])=>o?.method==='PUT')).toBe(true))
+ const inputs=fetch.mock.calls.filter(([p,o])=>p.endsWith('/check')||o?.method==='PUT')
+ for(const [, options] of inputs){
+  const {service}=JSON.parse(options!.body as string)
+  expect(service).toMatchObject({scheme:'http',host:'',port:80,caddyfile})
+  expect(service).not.toHaveProperty('static_site')
+  expect(service).not.toHaveProperty('advanced')
+ }
+ const file={...configurationFixture,services:[{...configurationFixture.services[0],scheme:'http',host:'',port:80,caddyfile}]}
+ expect(parseConfiguration(JSON.stringify(file)).services[0]).toMatchObject({caddyfile})
+})
+it('requires explicit confirmation for replacing advanced options or custom source and retains the custom draft while switching',async()=>{
+ view()
+ fireEvent.click(await screen.findByRole('button',{name:'编辑 照片库'}))
+ fireEvent.click(screen.getByText('高级配置'))
+ fireEvent.change(screen.getByLabelText('连接超时'),{target:{value:'5s'}})
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'custom'}})
+ expect(screen.getByLabelText('连接超时')).toHaveValue('5s')
+ fireEvent.click(screen.getByRole('button',{name:'继续使用自定义配置'}))
+ fireEvent.change(screen.getByLabelText('Caddyfile 正文'),{target:{value:'respond "saved"'}})
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'proxy'}})
+ expect(screen.getByLabelText('Caddyfile 正文')).toHaveValue('respond "saved"')
+ fireEvent.click(screen.getByRole('button',{name:'继续使用快捷配置'}))
+ expect(screen.getByLabelText('连接超时')).toHaveValue('5s')
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'custom'}})
+ fireEvent.click(screen.getByRole('button',{name:'继续使用自定义配置'}))
+ expect(screen.getByLabelText('Caddyfile 正文')).toHaveValue('respond "saved"')
+})
+it('defaults a new pure static service to the project mount without requiring an upstream',async()=>{
+ const fetch=view()
+ const create=await screen.findByRole('button',{name:'新建服务'})
+ await waitFor(()=>expect(create).toBeEnabled())
+ fireEvent.click(create)
+ fireEvent.change(screen.getByLabelText('服务类型'),{target:{value:'files'}})
+ fireEvent.change(screen.getByLabelText('服务名称'),{target:{value:'文档'}})
+ fireEvent.change(screen.getByLabelText('子域名'),{target:{value:'docs'}})
+ expect(screen.getByLabelText('静态目录')).toHaveValue('/srv/sites/docs')
+ expect(screen.queryByLabelText('上游主机')).not.toBeInTheDocument()
+ expect(screen.getByText(/SITES_DIR/)).toBeVisible()
+ fireEvent.click(screen.getByRole('button',{name:'检查配置'}))
+ await waitFor(()=>expect(fetch.mock.calls.some(([p])=>p.endsWith('/check'))).toBe(true))
+ const [,options]=fetch.mock.calls.find(([p])=>p.endsWith('/check'))!
+ expect(JSON.parse(options!.body as string).service).toMatchObject({scheme:'http',host:'',port:80,static_site:{root:'/srv/sites/docs',spa_fallback:false}})
 })

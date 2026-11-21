@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: corepack enable
+      - run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - run: go mod download && go mod verify && go test -race ./cmd/... ./internal/... && go vet ./cmd/... ./internal/...
       - name: Validate the pinned Caddy with isolated Cloudflare fixtures
         run: |
@@ -36,7 +36,7 @@ jobs:
           docker compose -f compose.full.yaml config --quiet
           CADDY_ADMIN_URL=http://external:2019 MANAGER_DIAL=manager:8080 docker compose -f compose.yaml -f compose.external.yaml config --quiet
           docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml config --quiet
-      - run: corepack pnpm install --frozen-lockfile && corepack pnpm test && corepack pnpm build
+      - run: yarn install --frozen-lockfile && yarn test && yarn build
         working-directory: web
       - run: docker compose -p caddy-admin-validation -f compose.yaml -f compose.validation.yaml build
   publish:

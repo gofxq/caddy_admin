@@ -48,6 +48,7 @@ services: # 完整示例：docker compose -f compose.full.yaml up -d；独立替
     # extra_hosts: # 可选：使用 host.docker.internal 访问宿主机时，同时取消本行及下一行注释。
     #   - 'host.docker.internal:host-gateway' # 增加宿主网关解析，不自动发现宿主 LAN IP，也不修改 DNS 记录。
     volumes: # 必需：四个持久化目录；停服一致备份，包含私钥的备份必须加密。
+      - '${SITES_DIR:-./sites}:/srv/sites:ro' # 每个子目录对应一个项目；修改宿主文件后 Caddy 直接读取。
       - './.run/manager:/var/lib/manager' # SQLite、会话、实例锁和受限 secret；不得删除真实数据绕过启动失败。
       - './.run/snapshots:/srv/snapshots' # active.json 启动快照，不作为手工配置入口。
       - './.run/caddy-data:/data' # 证书、私钥及 ACME 状态。

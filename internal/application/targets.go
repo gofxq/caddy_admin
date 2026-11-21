@@ -65,7 +65,8 @@ func (service *Service) targetPolicyForSettings(ctx context.Context, settings do
 			reserved = append(reserved, address.String())
 		}
 	}
-	return domain.TargetPolicy{Domains: settings.Domains, PreviousAdminDomain: settings.PreviousAdminDomain, AdminDomain: settings.AdminDomain, UpstreamCIDRs: settings.UpstreamCIDRs, AllowedNames: settings.AllowedNames, ReservedIPs: reserved, DeniedIPs: settings.DeniedIPs, SystemEndpoints: endpoints, Resolver: service.resolver}, nil
+	adapter, _ := service.caddy.(domain.HTTPRouteAdapter)
+	return domain.TargetPolicy{RouteAdapter: adapter, Domains: settings.Domains, PreviousAdminDomain: settings.PreviousAdminDomain, AdminDomain: settings.AdminDomain, UpstreamCIDRs: settings.UpstreamCIDRs, AllowedNames: settings.AllowedNames, ReservedIPs: reserved, DeniedIPs: settings.DeniedIPs, SystemEndpoints: endpoints, Resolver: service.resolver}, nil
 }
 
 func (service *Service) ClientAddress(ctx context.Context, remoteAddress, forwardedAddress string) string {

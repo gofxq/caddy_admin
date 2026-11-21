@@ -56,7 +56,7 @@
 **Interfaces:** 页面路由 `/services/$id`；`ServiceDetail`、`UpstreamCheck` 类型与后端字段一致。
 
 - [x] 写草稿/已发布分离、待删除、断联保留数据、手动检查重试、版本变化清除旧结果、切换服务清除旧结果的失败测试。
-- [x] `cd web && corepack pnpm test src/service-detail.test.tsx src/mock-api.test.ts` 确认 RED。
+- [x] 运行 `service-detail.test.tsx` 与 `mock-api.test.ts` 确认 RED。
 - [x] 实现详情、列表和待删除入口、动态路由、移动端样式与 mock。
 - [x] 同一测试命令确认 GREEN。
 

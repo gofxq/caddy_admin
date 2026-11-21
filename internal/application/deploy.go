@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -228,7 +229,7 @@ func (service *Service) Begin(ctx context.Context, request domain.PublishRequest
 		if normalizeErr != nil {
 			return domain.Deployment{}, normalizeErr
 		}
-		if normalized.Dial != item.Dial {
+		if normalized.Dial != item.Dial || !bytes.Equal(normalized.ResolvedRoutes, item.ResolvedRoutes) {
 			return domain.Deployment{}, domain.Conflict("上游解析已变化，请重新校验")
 		}
 	}

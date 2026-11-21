@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "corepack pnpm install --frozen-lockfile",
-  "buildCommand": "corepack pnpm build:demo",
+  "installCommand": "yarn install --frozen-lockfile",
+  "buildCommand": "yarn build:demo",
   "outputDirectory": "dist-demo",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

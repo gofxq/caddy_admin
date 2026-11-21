@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -16,7 +17,12 @@ type TargetResolver interface {
 	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
 }
 
+type HTTPRouteAdapter interface {
+	AdaptHTTPRoute(context.Context, string) (json.RawMessage, error)
+}
+
 type TargetPolicy struct {
+	RouteAdapter        HTTPRouteAdapter
 	Domains             []ManagedDomain
 	PreviousAdminDomain string
 	AdminDomain         string
@@ -139,6 +145,7 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 	service.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(service.Hostname), "."))
 	service.Host = strings.ToLower(strings.TrimSpace(service.Host))
 	service.Dial = ""
+	service.ResolvedRoutes = nil
 	if service.Name == "" || len(service.Name) > 100 || len(service.Notes) > 2000 {
 		return service, Invalid("名称必填且不超过 100 字节，备注不超过 2000 字节")
 	}
@@ -152,8 +159,33 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 	if base == "" || !OneLevel(service.Hostname, base) || service.Hostname == policy.AdminDomain || (policy.PreviousAdminDomain != "" && service.Hostname == policy.PreviousAdminDomain) {
 		return service, Invalid("域名必须为所选域名的一层子域且不能占用控制台")
 	}
-	if service.Scheme != "http" && service.Scheme != "https" && service.Scheme != "h2c" && service.Scheme != "grpcs" {
-		return service, Invalid("上游协议必须为 HTTP、HTTPS、gRPC 明文或 gRPC TLS")
+	if service.Caddyfile != "" {
+		if service.Advanced != nil || service.StaticSite != nil {
+			return service, Invalid("自定义 Caddyfile 与快捷配置只能选择一种")
+		}
+		if strings.TrimSpace(service.Caddyfile) == "" || len(service.Caddyfile) > 16<<10 {
+			return service, Invalid("自定义 Caddyfile 必填，最多 16 KiB")
+		}
+		if policy.RouteAdapter == nil {
+			return service, &AppError{Status: 503, Code: "unavailable", Message: "当前实例无法解析服务 Caddyfile"}
+		}
+		raw, err := policy.RouteAdapter.AdaptHTTPRoute(ctx, service.Caddyfile)
+		if err != nil {
+			return service, err
+		}
+		service.ResolvedRoutes, err = normalizeHTTPRoute(ctx, policy, service, raw)
+		service.Scheme, service.Host, service.Port = "http", "", 80
+		return service, err
+	}
+	if err := service.StaticSite.validate(); err != nil {
+		return service, err
+	}
+	if service.FilesOnly() {
+		if service.Advanced != nil {
+			return service, Invalid("纯静态服务只使用静态文件选项")
+		}
+		service.Scheme, service.Host, service.Port = "http", "", 80
+		return service, nil
 	}
 	if _, err := EffectiveServiceAdvanced(service); err != nil {
 		return service, err
@@ -164,6 +196,14 @@ func NormalizeService(ctx context.Context, policy TargetPolicy, service Service)
 		copy.RequestHeaders = append([]HeaderRule(nil), copy.RequestHeaders...)
 		copy.ResponseHeaders = append([]HeaderRule(nil), copy.ResponseHeaders...)
 		service.Advanced = &copy
+	}
+	return normalizeUpstream(ctx, policy, service)
+}
+
+func normalizeUpstream(ctx context.Context, policy TargetPolicy, service Service) (Service, error) {
+	service.Host = strings.ToLower(strings.TrimSpace(service.Host))
+	if service.Scheme != "http" && service.Scheme != "https" && service.Scheme != "h2c" && service.Scheme != "grpcs" {
+		return service, Invalid("上游协议必须为 HTTP、HTTPS、gRPC 明文或 gRPC TLS")
 	}
 	if service.Port < 1 || service.Port > 65535 {
 		return service, Invalid("端口必须为 1–65535")

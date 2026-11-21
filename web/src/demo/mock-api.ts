@@ -1,6 +1,6 @@
 import {parseConfiguration,portableService} from "../configuration.ts";
 import {validNewPassword} from "../password.ts";
-import {exposureChanges,type ManagedSettings} from "../model.ts";
+import {exposureChanges,hasPrimaryUpstream,type ManagedSettings} from "../model.ts";
 import type {
   Alert, TrafficStats,
   Audit,
@@ -100,7 +100,7 @@ function changes(before: Service[], after: Service[]): Change[] {
       ].some(
         (key) =>
           previous[key as keyof Service] !== current[key as keyof Service],
-      ) || JSON.stringify(previous.advanced)!==JSON.stringify(current.advanced)
+      ) || previous.caddyfile!==current.caddyfile || JSON.stringify(previous.static_site)!==JSON.stringify(current.static_site) || JSON.stringify(previous.advanced)!==JSON.stringify(current.advanced)
     ) {
       const kind =
         previous.enabled !== current.enabled
@@ -150,6 +150,19 @@ function serviceHandlers(service:Service){
  return [{handler:'encode',encodings:Object.fromEntries(prefer.map(name=>[name,{}])),prefer},proxy]
 }
 
+function serviceRoute(service:Service){
+ if(service.caddyfile!==undefined)return []
+ const handlers=hasPrimaryUpstream(service)?serviceHandlers(service):[]
+ const site=service.static_site
+ if(!site)return handlers
+ return [{handler:'subroute',routes:[
+  ...(site.api_path?[{match:[{path:[site.api_path]}],handle:handlers,terminal:true}]:[]),
+  {handle:[{handler:'vars',root:site.root}]},
+  {match:[{file:{try_files:['{http.request.uri.path}','{http.request.uri.path}/',...((site.spa_fallback??!!site.api_path)?['/index.html']:[])]}}],handle:[{handler:'rewrite',uri:'{http.matchers.file.relative}'}]},
+  {handle:[{handler:'file_server'}]},
+ ]}]
+}
+
 function config(services: Service[]) {
   return {
     apps: {
@@ -161,7 +174,7 @@ function config(services: Service[]) {
               .filter((service) => service.enabled)
               .map((service) => ({
                 match: [{ host: [service.hostname] }],
-                handle: serviceHandlers(service),
+                handle: serviceRoute(service),
               })),
           },
         },
@@ -314,6 +327,7 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
     if (rollbackId && !original) return null;
     const target = original?.services ?? draft;
     const result: Preview = {
+      simulated:true,
       revision,
       settings:clone(rollbackId?activeSettings:portableSettings),active_settings:clone(activeSettings),settings_changed:JSON.stringify(activeSettings)!==JSON.stringify(portableSettings),
       services: clone(target),
@@ -418,8 +432,8 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
     if(method==='POST'&&path==='/services/check'){
       if(input.revision!==revision)return fail(409,'conflict','草稿已变化，请读取最新草稿后重新检查');
       const candidate=input.service as Service;
-      if(!candidate?.name||!candidate.host||!candidate.hostname)return fail(422,'validation','请填写完整的服务信息');
-      try{parseConfiguration(JSON.stringify({format:'caddy-web-admin',version:2,settings:portableSettings,services:[portableService(candidate)]}));}catch{return fail(422,'validation','高级配置格式无效');}
+      if(!candidate?.name||(!candidate.host&&hasPrimaryUpstream(candidate))||!candidate.hostname)return fail(422,'validation','请填写完整的服务信息');
+      try{parseConfiguration(JSON.stringify({format:'caddy-web-admin',version:2,settings:portableSettings,services:[portableService(candidate)]}));}catch{return fail(422,'validation','服务配置格式无效');}
       if(['h2c','grpcs'].includes(candidate.scheme)&&candidate.advanced?.compression&&candidate.advanced.compression!=='off')return fail(422,'validation','gRPC 不使用 HTTP 响应压缩');
       return ok({revision,service:clone(candidate),effective:clone(candidate.advanced??{}),config:config([{...candidate,enabled:true}]),simulated:true});
     }
@@ -432,10 +446,10 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
           const hostname=item.hostname.trim().toLowerCase().replace(/\.+$/,"");
           const domain=portableSettings.domains.find(d=>d.id===item.domain_id);
           const label=domain?hostname.slice(0,-("."+domain.name).length):'';
-          if(!domain||!hostname.endsWith('.'+domain.name)||!label||label.includes('.')||hostname===portableSettings.admin_domain||seen.has(hostname)||!item.name.trim()||!item.host.trim())throw new Error("服务不符合演示实例的域名或网络策略");
-          if(!staticDemo&&(item.domain_id!=="home"||!/^10\.(\d{1,3}\.){2}\d{1,3}$/.test(item.host)||item.host.split(".").some(v=>Number(v)>255)||portableSettings.denied_ips.includes(item.host)))throw new Error("服务不符合演示实例的网络策略");
+          if(!domain||!hostname.endsWith('.'+domain.name)||!label||label.includes('.')||hostname===portableSettings.admin_domain||seen.has(hostname)||!item.name.trim()||(!item.host.trim()&&hasPrimaryUpstream(item)))throw new Error("服务不符合演示实例的域名或网络策略");
+          if(!staticDemo&&hasPrimaryUpstream(item)&&(item.domain_id!=="home"||!/^10\.(\d{1,3}\.){2}\d{1,3}$/.test(item.host)||item.host.split(".").some(v=>Number(v)>255)||portableSettings.denied_ips.includes(item.host)))throw new Error("服务不符合演示实例的网络策略");
           seen.add(hostname);
-          return {...item,hostname,id:draft.find(old=>old.hostname===hostname)?.id??randomUUID(),dial:`${item.host}:${item.port}`,updated_at:now()};
+          return {...item,hostname,id:draft.find(old=>old.hostname===hostname)?.id??randomUUID(),dial:hasPrimaryUpstream(item)?`${item.host}:${item.port}`:'',updated_at:now()};
         });
         if(path==="/configuration/preview")return ok({revision,services,changes:changes(draft,services)});
         if(input.confirm!==true)return fail(422,"invalid","请明确确认替换当前服务草稿");
@@ -454,6 +468,7 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
       if(method==="POST"){
         if(Object.keys(input).some(k=>k!=="expected_hash"&&k!=="expected_deployment_id"))return fail(422,"validation","请求包含未知字段");
         if(!publishedService?.enabled||pending||input.expected_hash!==runtime.expected_hash||input.expected_deployment_id!==runtime.deployment_id)return fail(409,"conflict","请核对已发布且启用的服务和运行配置");
+        if(!hasPrimaryUpstream(publishedService))return fail(422,"validation","此服务没有单一上游检查目标");
         return ok({deployment_id:runtime.deployment_id,status:"reachable",target:publishedService.dial||`${publishedService.host}:${publishedService.port}`,duration_ms:2,checked_at:now(),expected_hash:runtime.expected_hash,vantage:"manager",message:"演示结果：TCP 可连接；未进行真实网络检查"});
       }
       const recent=deployments.slice(0,20).filter(d=>d.changes.some(c=>c.before?.id===id||c.after?.id===id)).slice(0,5).map(({id,version,status,created,finished,rollback_id})=>({id,version,status,created,finished,rollback_id}));
@@ -481,10 +496,13 @@ export function createMockApi(options:{staticDemo?:boolean;setup?:boolean;state?
         if (
           !service?.name ||
           !service.hostname ||
-          !service.host ||
+          (!service.host&&hasPrimaryUpstream(service)) ||
           !service.port
         )
           return fail(422, "invalid_service", "请填写完整的服务信息");
+        if(service.caddyfile!==undefined){
+          try{parseConfiguration(JSON.stringify({format:'caddy-web-admin',version:2,settings:portableSettings,services:[portableService(service)]}));}catch{return fail(422,'validation','服务配置格式无效');}
+        }
         if (method === "PUT" && !draft.some((item) => item.id === id))
           return fail(404, "not_found", "服务不存在");
         const updated = {

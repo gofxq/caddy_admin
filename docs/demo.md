@@ -30,25 +30,25 @@ make web-demo
 
 ```bash
 cd web
-corepack pnpm install --frozen-lockfile
-corepack pnpm build:demo
+yarn install --frozen-lockfile
+yarn build:demo
 ```
 
 产物为 `web/dist-demo/`，独立于正式产品的 `web/dist/`。可将该目录托管到支持 SPA 路由回退的静态服务。
 
 在 Vercel 导入仓库，将 **Root Directory 设置为 `web`**。该目录下的 `vercel.json` 已配置 Vite、锁文件安装、`build:demo`、输出目录 `dist-demo` 和 SPA 回退，直接访问或刷新 `/services/photos`、`/deployments`、`/settings`、`/setup` 等路径均返回入口页面。无需配置后端地址或密钥，也不使用 Functions。
 
-具体步骤：先将本地改动提交并推送到 GitHub，然后在 Vercel 点击「Add New → Project」，导入该仓库；选择包含 Demo 改动的分支，将 Root Directory 改为 `web`，点击 Deploy。若手动填写构建选项，安装命令为 `corepack pnpm install --frozen-lockfile`，构建命令为 `corepack pnpm build:demo`，输出目录为 `dist-demo`。部署成功后打开 Vercel 提供的网址，并验证 `/services` 页面刷新仍可正常访问。
+具体步骤：先将本地改动提交并推送到 GitHub，然后在 Vercel 点击「Add New → Project」，导入该仓库；选择包含 Demo 改动的分支，将 Root Directory 改为 `web`，点击 Deploy。若手动填写构建选项，安装命令为 `yarn install --frozen-lockfile`，构建命令为 `yarn build:demo`，输出目录为 `dist-demo`。部署成功后打开 Vercel 提供的网址，并验证 `/services` 页面刷新仍可正常访问。
 
-`make web` 仍为 `127.0.0.1:5177` 的开发服务器演示；`make web-demo`（也可使用 `make static-web`）预览的是构建好的静态文件。`corepack pnpm build` 保持正式产品构建，调用真实 Manager API。
+`make web` 仍为 `127.0.0.1:5177` 的开发服务器演示；`make web-demo`（也可使用 `make static-web`）预览的是构建好的静态文件。`yarn build` 保持正式产品构建，调用真实 Manager API。
 
 ## 验证
 
 ```bash
 cd web
-corepack pnpm test
-corepack pnpm build
-corepack pnpm build:demo
+yarn test
+yarn build
+yarn build:demo
 ```
 
 静态演示测试覆盖无后端请求、初始化与 DNS、证书启用、草稿及发布状态、回滚保留草稿、刷新恢复、重置，以及密码和 Token 不进入浏览器持久化。上述模拟测试不替代真实 Caddy 集成或容器部署验收。

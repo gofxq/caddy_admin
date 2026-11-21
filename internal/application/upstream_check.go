@@ -19,6 +19,9 @@ func (service *Service) CheckUpstream(ctx context.Context, id, expectedHash, exp
 	if detail.Published == nil || !detail.Published.Enabled {
 		return domain.UpstreamCheck{}, domain.Conflict("只能检查已发布且启用的服务上游")
 	}
+	if detail.Published.FilesOnly() || detail.Published.Caddyfile != "" {
+		return domain.UpstreamCheck{}, domain.Invalid("该服务没有可单独检查的上游目标")
+	}
 	if detail.Runtime.Status != "matched" || expectedHash == "" || expectedHash != detail.Runtime.ExpectedHash || expectedDeploymentID == "" || expectedDeploymentID != detail.Runtime.DeploymentID {
 		return domain.UpstreamCheck{}, domain.Conflict("运行配置或发布版本未确认，请刷新详情后重试")
 	}

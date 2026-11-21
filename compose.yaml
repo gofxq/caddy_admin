@@ -24,6 +24,7 @@ services: # 内置模式：docker compose up -d，然后打开 http://服务器I
     cap_add: [NET_BIND_SERVICE, SETUID, SETGID, DAC_OVERRIDE, CHOWN, FOWNER] # 绑定低端口、准备目录权限并切换到 10001:10001。
     security_opt: [no-new-privileges:true] # 禁止进程获得新增权限；不要使用 privileged 或挂载 Docker Socket。
     volumes: # 可选：在 .env 设置 RUN_DIR 自定义宿主数据根目录，默认 ./.run；自动创建目录；四个持久化目录须停服一致备份，包含私钥的备份必须加密。
+      - '${SITES_DIR:-./sites}:/srv/sites:ro' # 每个子目录对应一个项目；修改宿主文件后 Caddy 直接读取。
       - '${RUN_DIR:-./.run}/manager:/var/lib/manager' # SQLite、会话、实例锁和受限 secret。
       - '${RUN_DIR:-./.run}/snapshots:/srv/snapshots' # active.json 启动快照，不作为手工配置入口。
       - '${RUN_DIR:-./.run}/caddy-data:/data' # 证书、私钥和 ACME 状态。

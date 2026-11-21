@@ -11,18 +11,22 @@ import (
 )
 
 type Service struct {
-	Advanced  *ServiceAdvanced `json:"advanced,omitempty"`
-	ID        string           `json:"id"`
-	Name      string           `json:"name"`
-	DomainID  string           `json:"domain_id"`
-	Hostname  string           `json:"hostname"`
-	Scheme    string           `json:"scheme"`
-	Host      string           `json:"host"`
-	Port      int              `json:"port"`
-	Enabled   bool             `json:"enabled"`
-	Notes     string           `json:"notes"`
-	Dial      string           `json:"dial"`
-	UpdatedAt string           `json:"updated_at"`
+	Caddyfile string `json:"caddyfile,omitempty"`
+	// ResolvedRoutes is rebuilt from Caddyfile at every validation, using current policy.
+	ResolvedRoutes json.RawMessage  `json:"resolved_routes,omitempty"`
+	StaticSite     *StaticSite      `json:"static_site,omitempty"`
+	Advanced       *ServiceAdvanced `json:"advanced,omitempty"`
+	ID             string           `json:"id"`
+	Name           string           `json:"name"`
+	DomainID       string           `json:"domain_id"`
+	Hostname       string           `json:"hostname"`
+	Scheme         string           `json:"scheme"`
+	Host           string           `json:"host"`
+	Port           int              `json:"port"`
+	Enabled        bool             `json:"enabled"`
+	Notes          string           `json:"notes"`
+	Dial           string           `json:"dial"`
+	UpdatedAt      string           `json:"updated_at"`
 }
 
 type Draft struct {
